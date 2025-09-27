@@ -4,7 +4,9 @@ Pillow==10.4.0
 openpyxl==3.1.5
 pandas==2.2.2
 regex==2024.9.11
+python-dateutil==2.9.0.post0
+tqdm==4.66.4
 click==8.1.7
 loguru==0.7.2
-tqdm==4.66.4
-python-dateutil==2.9.0.post0
+SQLAlchemy==2.0.35
+PyYAML==6.0.2

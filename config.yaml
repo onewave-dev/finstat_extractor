@@ -1,0 +1,7 @@
+tesseract_path: "C:\\Program Files\\Tesseract-OCR\\tesseract.exe"
+poppler_bin_dir: "C:\\tools\\poppler\\bin"
+ocr_langs: "srp+srp_latn"
+dpi: 300
+year_preference: "current"
+page_limit: 2
+overwrite_nonempty: false
