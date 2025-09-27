@@ -11,13 +11,14 @@ import sys
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import yaml
 
 from io import excel_io
 from index import pdf_index
 from ocr import ocr_engine
+from extract.models import ExtractionMessage, ExtractionResult
 
 try:  # pragma: no cover - optional during tests
     from extract import bu as extract_bu  # type: ignore
@@ -359,9 +360,15 @@ def _extract_single_field(
         missing.append(field)
         return None, notes, missing
 
-    value, extractor_notes = _invoke_extractor(extractor, ocr_result, year_preference, config, logger)
+    value, extractor_notes, meta = _invoke_extractor(
+        extractor,
+        ocr_result,
+        year_preference,
+        config,
+        logger,
+    )
     notes.extend(extractor_notes)
-    if value is None or (isinstance(value, str) and not value.strip()):
+    if meta.get("has_errors") or not meta.get("has_value"):
         missing.append(field)
         return None, notes, missing
     return value, notes, missing
@@ -403,9 +410,15 @@ def _extract_multiple_fields(
             notes.append(f"Extractor for {field} is not implemented")
             missing.append(field)
             continue
-        value, extractor_notes = _invoke_extractor(extractor, ocr_result, year_preference, config, logger)
+        value, extractor_notes, meta = _invoke_extractor(
+            extractor,
+            ocr_result,
+            year_preference,
+            config,
+            logger,
+        )
         notes.extend(extractor_notes)
-        if value is None or (isinstance(value, str) and not value.strip()):
+        if meta.get("has_errors") or not meta.get("has_value"):
             missing.append(field)
         else:
             values[field] = value
@@ -435,26 +448,107 @@ def _invoke_extractor(func, ocr_result, year_preference: str, config: Dict[str, 
         result = func(ocr_result, **kwargs)
     except Exception as exc:  # pragma: no cover - extractor failure path
         logger.exception("Extractor %s failed", getattr(func, "__name__", func))
-        return None, [f"Extractor error: {exc}"]
-    value, notes = _coerce_extractor_result(result)
-    return value, notes
+        return None, [f"Extractor error: {exc}"], {
+            "has_errors": True,
+            "has_warnings": False,
+            "has_value": False,
+        }
+    value, notes, meta = _coerce_extractor_result(result)
+    return value, notes, meta
 
 
-def _coerce_extractor_result(result) -> Tuple[Optional[object], List[str]]:
+def _coerce_extractor_result(result) -> Tuple[Optional[object], List[str], Dict[str, bool]]:
     notes: List[str] = []
-    value = result
-    if isinstance(result, dict):
+    has_errors = False
+    has_warnings = False
+
+    value: Any = result
+
+    if isinstance(result, ExtractionResult):
+        value = result.value
+        if result.errors:
+            has_errors = True
+            notes.extend(_format_extraction_messages("ERROR", result.errors))
+        if result.warnings:
+            has_warnings = True
+            notes.extend(_format_extraction_messages("WARNING", result.warnings))
+    elif isinstance(result, dict):
         value = result.get("value")
         extra = result.get("notes") or result.get("note")
         notes.extend(_ensure_note_list(extra))
+        if result.get("errors"):
+            has_errors = True
+            notes.extend(_format_message_entries("ERROR", result.get("errors")))
+        if result.get("warnings"):
+            has_warnings = True
+            notes.extend(_format_message_entries("WARNING", result.get("warnings")))
     elif isinstance(result, tuple):
-        if result:
-            value = result[0]
+        value = result[0] if result else None
         if len(result) > 1:
             notes.extend(_ensure_note_list(result[1]))
+        if len(result) > 2 and result[2]:
+            has_errors = True
+            notes.extend(_format_message_entries("ERROR", result[2]))
     else:
+        value = getattr(result, "value", value)
         notes.extend(_ensure_note_list(getattr(result, "notes", None)))
-    return value, notes
+        errors = getattr(result, "errors", None)
+        warnings = getattr(result, "warnings", None)
+        if errors:
+            has_errors = True
+            notes.extend(_format_message_entries("ERROR", errors))
+        if warnings:
+            has_warnings = True
+            notes.extend(_format_message_entries("WARNING", warnings))
+
+    has_value = _has_value(value)
+    if not has_value:
+        value = None
+
+    meta = {
+        "has_errors": has_errors,
+        "has_warnings": has_warnings,
+        "has_value": has_value,
+    }
+    return value, notes, meta
+
+
+def _format_extraction_messages(level: str, messages: Iterable[ExtractionMessage]) -> List[str]:
+    formatted: List[str] = []
+    for message in messages:
+        context = ""
+        if message.context:
+            details = ", ".join(f"{key}={value}" for key, value in sorted(message.context.items()))
+            context = f" ({details})"
+        formatted.append(f"{level} {message.code}: {message.message}{context}")
+    return formatted
+
+
+def _format_message_entries(level: str, messages: Any) -> List[str]:
+    if messages is None:
+        return []
+    if isinstance(messages, (list, tuple, set)):
+        items = list(messages)
+    else:
+        items = [messages]
+
+    formatted: List[str] = []
+    for item in items:
+        if isinstance(item, ExtractionMessage):
+            formatted.extend(_format_extraction_messages(level, [item]))
+            continue
+        if isinstance(item, dict):
+            code = item.get("code", "unknown")
+            message = item.get("message") or item.get("text") or str(item)
+            context = item.get("context") or {}
+            context_suffix = ""
+            if context:
+                details = ", ".join(f"{key}={value}" for key, value in sorted(context.items()))
+                context_suffix = f" ({details})"
+            formatted.append(f"{level} {code}: {message}{context_suffix}")
+            continue
+        formatted.append(f"{level}: {item}")
+    return formatted
 
 
 def _ensure_note_list(note) -> List[str]:
