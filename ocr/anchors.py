@@ -12,8 +12,9 @@ modules to match rows, headers and Matični broj identifiers reliably.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
 import re
-from typing import Dict, Iterable, List, Pattern
+from typing import Dict, Iterable, List, Optional, Pattern
 
 # ---------------------------------------------------------------------------
 # Matični broj detection
@@ -122,14 +123,13 @@ YEAR_COLUMN_PATTERNS: Dict[str, Pattern[str]] = {
 }
 
 
-YEAR_COLUMN_SYNONYMS: Dict[str, Iterable[str]] = {
+_YEAR_COLUMN_TEXTUAL_SYNONYMS: Dict[str, Iterable[str]] = {
     "current": [
         "текућа година",
         "текуће године",
         "текућа г.",
         "tekuca godina",
         "tekuce godine",
-        "2023",  # placeholder for context-specific headers
     ],
     "previous": [
         "претходна година",
@@ -137,9 +137,38 @@ YEAR_COLUMN_SYNONYMS: Dict[str, Iterable[str]] = {
         "претходна г.",
         "prethodna godina",
         "prethodne godine",
-        "2022",  # placeholder when tables use explicit year labels
     ],
 }
+
+
+YEAR_FOUR_DIGIT_PATTERN: Pattern[str] = re.compile(r"(?<!\d)(?P<year>\d{4})(?!\d)")
+
+
+def _resolve_reference_year(reference_year: Optional[int]) -> int:
+    return reference_year if reference_year is not None else date.today().year
+
+
+def get_reference_year(reference_year: Optional[int] = None) -> int:
+    """Return the baseline "current" year for column detection."""
+
+    return _resolve_reference_year(reference_year)
+
+
+def get_year_column_synonyms(
+    reference_year: Optional[int] = None,
+) -> Dict[str, List[str]]:
+    """Return textual and numeric variants for year column headers."""
+
+    year = _resolve_reference_year(reference_year)
+    synonyms: Dict[str, List[str]] = {
+        key: list(values) for key, values in _YEAR_COLUMN_TEXTUAL_SYNONYMS.items()
+    }
+    synonyms.setdefault("current", []).append(str(year))
+    synonyms.setdefault("previous", []).append(str(year - 1))
+    return synonyms
+
+
+YEAR_COLUMN_SYNONYMS: Dict[str, Iterable[str]] = get_year_column_synonyms()
 
 
 # ---------------------------------------------------------------------------
@@ -167,7 +196,7 @@ class AnchorDefinition:
         return any(syn.lower() in lowered for syn in self.synonyms)
 
 
-def build_anchor_map() -> Dict[str, AnchorDefinition]:
+def build_anchor_map(reference_year: Optional[int] = None) -> Dict[str, AnchorDefinition]:
     """Create a canonical anchor mapping for downstream modules."""
 
     anchors: Dict[str, AnchorDefinition] = {}
@@ -179,11 +208,13 @@ def build_anchor_map() -> Dict[str, AnchorDefinition]:
             synonyms=list(ROW_ANCHOR_SYNONYMS.get(key, [])),
         )
 
+    resolved_year = get_reference_year(reference_year)
+    year_synonyms = get_year_column_synonyms(reference_year=resolved_year)
     for key, pattern in YEAR_COLUMN_PATTERNS.items():
         anchors[f"year_{key}"] = AnchorDefinition(
             key=f"year_{key}",
             pattern=pattern,
-            synonyms=list(YEAR_COLUMN_SYNONYMS.get(key, [])),
+            synonyms=list(year_synonyms.get(key, [])),
         )
 
     return anchors
@@ -199,7 +230,10 @@ __all__ = [
     "ROW_ANCHOR_SYNONYMS",
     "YEAR_COLUMN_PATTERNS",
     "YEAR_COLUMN_SYNONYMS",
+    "YEAR_FOUR_DIGIT_PATTERN",
     "AnchorDefinition",
+    "get_reference_year",
+    "get_year_column_synonyms",
     "build_anchor_map",
 ]
 

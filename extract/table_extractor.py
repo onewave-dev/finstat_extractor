@@ -292,7 +292,12 @@ def _find_anchor_lines(
 
 def _detect_year_columns(lines: Sequence[OcrLine]) -> Dict[str, ColumnPosition]:
     result: Dict[str, ColumnPosition] = {}
-    synonyms = anchors.YEAR_COLUMN_SYNONYMS
+    reference_year = anchors.get_reference_year()
+    synonyms = anchors.get_year_column_synonyms(reference_year=reference_year)
+    numeric_labels = {
+        reference_year: "current",
+        reference_year - 1: "previous",
+    }
 
     for line in lines:
         norm_words = [(word, _normalise_token(word.text)) for word in line.words]
@@ -326,6 +331,30 @@ def _detect_year_columns(lines: Sequence[OcrLine]) -> Dict[str, ColumnPosition]:
                 if existing is None or candidate.top < existing.top:
                     result[label] = candidate
                 break
+
+        for word in line.words:
+            match = anchors.YEAR_FOUR_DIGIT_PATTERN.search(word.text)
+            if not match:
+                continue
+            try:
+                year_value = int(match.group("year"))
+            except (TypeError, ValueError):
+                continue
+            label = numeric_labels.get(year_value)
+            if label is None:
+                continue
+            candidate = ColumnPosition(
+                label=label,
+                page_number=line.page_number,
+                left=word.left,
+                right=word.right,
+                top=word.top,
+                bottom=word.bottom,
+                text=line.text.strip(),
+            )
+            existing = result.get(label)
+            if existing is None or candidate.top < existing.top:
+                result[label] = candidate
 
     return result
 
