@@ -220,3 +220,69 @@ def test_detect_year_columns_handles_numeric_years(monkeypatch, reference_year):
     assert columns["current"].left == 200
     assert columns["previous"].label == "previous"
     assert columns["previous"].left == 80
+
+
+def test_detect_year_columns_handles_multiline_headers(monkeypatch):
+    reference_year = 2024
+    monkeypatch.setattr(anchors, "get_reference_year", lambda: reference_year)
+    top_line = OcrLine(
+        page_number=1,
+        block_num=1,
+        par_num=1,
+        line_num=1,
+        words=[_ocr_word("Текућа", left=120, top=20)],
+    )
+    bottom_line = OcrLine(
+        page_number=1,
+        block_num=1,
+        par_num=1,
+        line_num=2,
+        words=[_ocr_word("година", left=118, top=80)],
+    )
+
+    columns = _detect_year_columns([top_line, bottom_line])
+
+    assert "current" in columns
+    current = columns["current"]
+    assert current.label == "current"
+    assert current.left == 118
+    assert current.top == 20
+
+
+def test_detect_year_columns_uses_regex_fallback_when_synonyms_missing(monkeypatch):
+    reference_year = 2024
+    monkeypatch.setattr(anchors, "get_reference_year", lambda: reference_year)
+    monkeypatch.setattr(
+        anchors,
+        "get_year_column_synonyms",
+        lambda reference_year=None: {"current": [], "previous": []},
+    )
+    top_line = OcrLine(
+        page_number=1,
+        block_num=1,
+        par_num=1,
+        line_num=1,
+        words=[_ocr_word("Текућа", left=150, top=15)],
+    )
+    middle_line = OcrLine(
+        page_number=1,
+        block_num=1,
+        par_num=1,
+        line_num=2,
+        words=[_ocr_word("година", left=148, top=55)],
+    )
+    suffix_line = OcrLine(
+        page_number=1,
+        block_num=1,
+        par_num=1,
+        line_num=3,
+        words=[_ocr_word("(у 000 РСД)", left=146, top=95, width=120)],
+    )
+
+    columns = _detect_year_columns([top_line, middle_line, suffix_line])
+
+    assert "current" in columns
+    current = columns["current"]
+    assert current.label == "current"
+    assert current.left == 146
+    assert current.text.startswith("Текућа")
