@@ -22,13 +22,13 @@ from typing import Dict, Iterable, List, Pattern
 
 MAT_BR_PATTERN: Pattern[str] = re.compile(
     r"""
-    (?ix)                                   # ignore case, allow verbose mode
     (?:ма[тт]ични|maticni|matični)          # word "Matični" with variants
     \s*                                     # optional whitespace
     (?:број|broj)                            # word "broj" in Cyrillic/Latin
     \s*[:：\-\u2013]?\s*                   # optional delimiter
     (?P<number>\d{8,9})                     # capture the numeric identifier
-    """
+    """,
+    re.IGNORECASE | re.VERBOSE,
 )
 
 
