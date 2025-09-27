@@ -1,5 +1,5 @@
-tesseract_path: "C:\\Program Files\\Tesseract-OCR\\tesseract.exe"
-poppler_bin_dir: "C:\\tools\\poppler\\bin"
+tesseract_path: "C:\\Users\\jn432pw\\AppData\\Local\\Programs\\Tesseract-OCR\\tesseract.exe"
+poppler_bin_dir: "C:\\Users\\jn432pw\\Documents\\my_automation\\utils\\poppler-25.07.0\\Library\\bin"
 ocr_langs: "srp+srp_latn"
 dpi: 300
 year_preference: "current"
