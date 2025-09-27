@@ -21,6 +21,7 @@ from typing import Dict, Iterable, Iterator, List, Mapping, Optional
 
 from openpyxl import load_workbook
 from openpyxl.utils import column_index_from_string
+from openpyxl.utils.exceptions import InvalidFileException
 from openpyxl.workbook.workbook import Workbook
 from openpyxl.worksheet.worksheet import Worksheet
 
@@ -70,10 +71,24 @@ class ExcelRow:
 # ---------------------------------------------------------------------------
 
 
+class UnsupportedExcelFormatError(RuntimeError):
+    """Raised when the workbook cannot be opened due to its file format."""
+
+
 def load_workbook_with_sheet(path: Path) -> tuple[Workbook, Worksheet]:
     """Load ``path`` and return the workbook together with the active sheet."""
 
-    workbook = load_workbook(filename=str(path))
+    try:
+        workbook = load_workbook(filename=str(path))
+    except InvalidFileException as exc:
+        if path.suffix.lower() == ".xls":
+            raise UnsupportedExcelFormatError(
+                f"Excel file '{path}' uses the legacy .xls format. "
+                "Please convert it to .xlsx and try again."
+            ) from exc
+        raise UnsupportedExcelFormatError(
+            f"Failed to open Excel file '{path}': {exc}"
+        ) from exc
     worksheet = workbook.active
     return workbook, worksheet
 
@@ -230,4 +245,5 @@ __all__ = [
     "read_rows",
     "save_workbook",
     "write_result_row",
+    "UnsupportedExcelFormatError",
 ]
