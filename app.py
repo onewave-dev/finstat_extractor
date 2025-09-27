@@ -159,7 +159,7 @@ def run(*, args: argparse.Namespace, config: Dict[str, object], logger: logging.
     stats = ProcessingStats(total_rows=len(rows))
     report_entries: List[ReportEntry] = []
 
-    engine = ocr_engine.OCREngine(config)
+    engine = ocr_engine.OCREngine(config, logger=logger)
     pdf_idx = pdf_index.build_index(
         period_preference=year_preference,
         ocr_provider=engine,

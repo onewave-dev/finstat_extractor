@@ -65,6 +65,7 @@ class OCREngine:
         config: Dict[str, object],
         cache_path: Path = DEFAULT_CACHE_PATH,
         log_path: Path = DEFAULT_LOG_PATH,
+        logger: Optional[logging.Logger] = None,
     ) -> None:
         self.config = config
         self.cache_path = Path(cache_path)
@@ -73,7 +74,7 @@ class OCREngine:
         self.cache_path.parent.mkdir(parents=True, exist_ok=True)
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
 
-        self.logger = self._configure_logger()
+        self.logger = logger or self._configure_logger()
 
         self._ensure_cache_schema()
         self._configure_tesseract()
