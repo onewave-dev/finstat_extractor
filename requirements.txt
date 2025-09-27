@@ -1,0 +1,10 @@
+pytesseract==0.3.13
+pdf2image==1.17.0
+Pillow==10.4.0
+openpyxl==3.1.5
+pandas==2.2.2
+regex==2024.9.11
+click==8.1.7
+loguru==0.7.2
+tqdm==4.66.4
+python-dateutil==2.9.0.post0
