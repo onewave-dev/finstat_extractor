@@ -1,0 +1,141 @@
+"""Tests covering the coercion and extraction helpers in :mod:`app`."""
+
+from __future__ import annotations
+
+import importlib
+import importlib.util
+import logging
+import sys
+from pathlib import Path
+from types import ModuleType, SimpleNamespace
+
+import pytest
+
+from extract.models import ExtractionResult
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _load_app_module():
+    builtin_io = importlib.import_module("io")
+    proxy_io = ModuleType("io")
+    proxy_io.__dict__.update(vars(builtin_io))
+
+    excel_spec = importlib.util.spec_from_file_location("io.excel_io", PROJECT_ROOT / "io" / "excel_io.py")
+    assert excel_spec and excel_spec.loader
+    excel_module = importlib.util.module_from_spec(excel_spec)
+    sys.modules["io.excel_io"] = excel_module
+    excel_spec.loader.exec_module(excel_module)
+
+    proxy_io.excel_io = excel_module
+    sys.modules["io"] = proxy_io
+
+    app_spec = importlib.util.spec_from_file_location("app", PROJECT_ROOT / "app.py")
+    assert app_spec and app_spec.loader
+    module = importlib.util.module_from_spec(app_spec)
+    sys.modules["app"] = module
+    app_spec.loader.exec_module(module)
+    return module
+
+
+app = _load_app_module()
+
+
+class DummyEngine:
+    def process(self, path: Path):  # pragma: no cover - trivial stub
+        return SimpleNamespace(path=path)
+
+
+class DummyIndex:
+    def __init__(self, entry):
+        self._entry = entry
+
+    def get_latest(self, mb: str, form_type: str, preferred_period: str):
+        return self._entry
+
+
+def test_coerce_extraction_result_collects_messages():
+    result = ExtractionResult(field_name="revenue", value=101)
+    result.add_warning("low_conf", "Low OCR confidence", confidence=0.42)
+    result.add_error("missing_anchor", "Anchor not found", anchor="пословни приходи")
+
+    value, notes, meta = app._coerce_extractor_result(result)
+
+    assert value == 101
+    assert meta == {"has_errors": True, "has_warnings": True, "has_value": True}
+    assert any(note.startswith("ERROR missing_anchor") for note in notes)
+    assert any("WARNING low_conf" in note for note in notes)
+    assert any("anchor=пословни приходи" in note for note in notes)
+
+
+def test_extract_single_field_marks_missing_on_error(monkeypatch: pytest.MonkeyPatch):
+    entry = SimpleNamespace(path=Path("dummy.pdf"))
+    index = DummyIndex(entry)
+    engine = DummyEngine()
+
+    extraction_result = ExtractionResult(field_name="revenue", value=500)
+    extraction_result.add_error("no_value", "Value not detected")
+
+    def fake_resolve(form_type: str, field: str):
+        assert form_type == "bu"
+        assert field == "revenue"
+        return lambda ocr_result, **kwargs: extraction_result
+
+    monkeypatch.setattr(app, "_resolve_extractor", fake_resolve)
+
+    value, notes, missing = app._extract_single_field(
+        mb="12345678",
+        form_type="bu",
+        field="revenue",
+        index=index,
+        engine=engine,
+        year_preference="current",
+        config={},
+        logger=logging.getLogger(__name__),
+    )
+
+    assert value is None
+    assert missing == ["revenue"]
+    assert any(note.startswith("ERROR no_value") for note in notes)
+
+
+def test_extract_multiple_fields_skips_failed_values(monkeypatch: pytest.MonkeyPatch):
+    entry = SimpleNamespace(path=Path("dummy.pdf"))
+    index = DummyIndex(entry)
+    engine = DummyEngine()
+
+    asset_result = ExtractionResult(field_name="assets", value=100)
+    asset_result.add_error("not_found", "Assets row not found")
+
+    loss_result = ExtractionResult(field_name="capital_loss", value=200)
+    loss_result.add_warning("low_conf", "Confidence below threshold", confidence=0.3)
+
+    def fake_resolve(form_type: str, field: str):
+        mapping = {
+            "assets": asset_result,
+            "capital_loss": loss_result,
+        }
+
+        def _extractor(ocr_result, **kwargs):
+            return mapping[field]
+
+        return _extractor
+
+    monkeypatch.setattr(app, "_resolve_extractor", fake_resolve)
+
+    values, notes, missing = app._extract_multiple_fields(
+        mb="12345678",
+        form_type="bs",
+        fields=["assets", "capital_loss"],
+        index=index,
+        engine=engine,
+        year_preference="current",
+        config={},
+        logger=logging.getLogger(__name__),
+    )
+
+    assert values == {"capital_loss": 200}
+    assert missing == ["assets"]
+    assert any(note.startswith("ERROR not_found") for note in notes)
+    assert any("WARNING low_conf" in note for note in notes)
