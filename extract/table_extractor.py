@@ -299,12 +299,14 @@ def _detect_year_columns(lines: Sequence[OcrLine]) -> Dict[str, ColumnPosition]:
         reference_year - 1: "previous",
     }
 
-    for line in lines:
-        norm_words = [(word, _normalise_token(word.text)) for word in line.words]
-        filtered_words = [(w, tok) for w, tok in norm_words if tok]
-        tokens = [tok for _, tok in filtered_words]
+    bands = _group_words_into_vertical_bands(lines)
 
-        for label, variants in synonyms.items():
+    for label, variants in synonyms.items():
+        best_match: Optional[ColumnPosition] = None
+        for band in bands:
+            filtered_words = band.filtered_words
+            if not filtered_words:
+                continue
             for variant in variants:
                 variant_tokens = [_normalise_token(part) for part in variant.split()]
                 variant_tokens = [tok for tok in variant_tokens if tok]
@@ -314,24 +316,42 @@ def _detect_year_columns(lines: Sequence[OcrLine]) -> Dict[str, ColumnPosition]:
                 if match is None:
                     continue
                 words = match
-                left = min(word.left for word in words)
-                right = max(word.right for word in words)
-                top = min(word.top for word in words)
-                bottom = max(word.bottom for word in words)
                 candidate = ColumnPosition(
                     label=label,
-                    page_number=line.page_number,
-                    left=left,
-                    right=right,
-                    top=top,
-                    bottom=bottom,
-                    text=line.text.strip(),
+                    page_number=band.page_number,
+                    left=min(word.left for word in words),
+                    right=max(word.right for word in words),
+                    top=min(word.top for word in words),
+                    bottom=max(word.bottom for word in words),
+                    text=band.text.strip(),
                 )
-                existing = result.get(label)
-                if existing is None or candidate.top < existing.top:
-                    result[label] = candidate
+                best_match = _pick_topmost(best_match, candidate)
                 break
+        if best_match is not None:
+            result[label] = best_match
+            continue
 
+        pattern = anchors.YEAR_COLUMN_PATTERNS.get(label)
+        if pattern is None:
+            continue
+        for band in bands:
+            band_text = band.text.strip()
+            if not band_text:
+                continue
+            if not pattern.search(band_text):
+                continue
+            candidate = ColumnPosition(
+                label=label,
+                page_number=band.page_number,
+                left=band.left,
+                right=band.right,
+                top=band.top,
+                bottom=band.bottom,
+                text=band_text,
+            )
+            result[label] = _pick_topmost(result.get(label), candidate)
+
+    for line in lines:
         for word in line.words:
             match = anchors.YEAR_FOUR_DIGIT_PATTERN.search(word.text)
             if not match:
@@ -352,9 +372,7 @@ def _detect_year_columns(lines: Sequence[OcrLine]) -> Dict[str, ColumnPosition]:
                 bottom=word.bottom,
                 text=line.text.strip(),
             )
-            existing = result.get(label)
-            if existing is None or candidate.top < existing.top:
-                result[label] = candidate
+            result[label] = _pick_topmost(result.get(label), candidate)
 
     return result
 
@@ -374,6 +392,100 @@ def _locate_token_sequence(
         if window == list(target_tokens):
             return [words_with_tokens[idx][0] for idx in range(start, start + length)]
     return None
+
+
+class _ColumnBand:
+    __slots__ = ("page_number", "left", "right", "top", "bottom", "_entries")
+
+    def __init__(self, line: OcrLine, word: OcrWord) -> None:
+        self.page_number = line.page_number
+        self.left = word.left
+        self.right = word.right
+        self.top = word.top
+        self.bottom = word.bottom
+        self._entries: List[Tuple[OcrLine, OcrWord]] = [(line, word)]
+
+    def add(self, line: OcrLine, word: OcrWord) -> None:
+        self._entries.append((line, word))
+        self.left = min(self.left, word.left)
+        self.right = max(self.right, word.right)
+        self.top = min(self.top, word.top)
+        self.bottom = max(self.bottom, word.bottom)
+
+    @property
+    def filtered_words(self) -> List[Tuple[OcrWord, str]]:
+        result: List[Tuple[OcrWord, str]] = []
+        for _, word in self._iter_entries():
+            token = _normalise_token(word.text)
+            if token:
+                result.append((word, token))
+        return result
+
+    @property
+    def text(self) -> str:
+        lines_map: Dict[Tuple[int, int, int, int], List[OcrWord]] = {}
+        for line, word in self._entries:
+            key = (line.page_number, line.block_num, line.par_num, line.line_num)
+            lines_map.setdefault(key, []).append(word)
+
+        parts: List[str] = []
+        for words in sorted(
+            lines_map.values(),
+            key=lambda words: (
+                min(word.top for word in words),
+                min(word.left for word in words),
+            ),
+        ):
+            sorted_words = sorted(words, key=lambda word: word.left)
+            line_text = " ".join(word.text for word in sorted_words if word.text.strip())
+            if not line_text:
+                continue
+            if parts:
+                parts.append("\n")
+            parts.append(line_text)
+        return "".join(parts)
+
+    def _iter_entries(self) -> List[Tuple[OcrLine, OcrWord]]:
+        return sorted(self._entries, key=lambda item: (item[1].top, item[1].left))
+
+
+def _group_words_into_vertical_bands(lines: Sequence[OcrLine]) -> List[_ColumnBand]:
+    bands: List[_ColumnBand] = []
+    for line in lines:
+        for word in line.words:
+            if not word.text.strip():
+                continue
+            band = _find_matching_band(bands, word)
+            if band is None:
+                bands.append(_ColumnBand(line, word))
+            else:
+                band.add(line, word)
+    bands.sort(key=lambda band: band.left)
+    return bands
+
+
+def _find_matching_band(bands: Sequence[_ColumnBand], word: OcrWord) -> Optional[_ColumnBand]:
+    for band in bands:
+        if _horizontal_overlap(word.left, word.right, band.left, band.right):
+            return band
+    return None
+
+
+def _horizontal_overlap(left1: int, right1: int, left2: int, right2: int) -> bool:
+    word_width = max(right1 - left1, 1)
+    band_width = max(right2 - left2, 1)
+    tolerance = max(12, min(max(word_width, band_width), 60))
+    return not (right1 < left2 - tolerance or right2 < left1 - tolerance)
+
+
+def _pick_topmost(
+    existing: Optional[ColumnPosition], candidate: Optional[ColumnPosition]
+) -> Optional[ColumnPosition]:
+    if candidate is None:
+        return existing
+    if existing is None or candidate.top < existing.top:
+        return candidate
+    return existing
 
 
 def _select_column(
