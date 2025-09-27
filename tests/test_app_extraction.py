@@ -7,6 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from openpyxl.utils.exceptions import InvalidFileException
 
 from extract.models import ExtractionResult
 
@@ -38,6 +39,37 @@ def test_coerce_extraction_result_collects_messages():
     assert any(note.startswith("ERROR missing_anchor") for note in notes)
     assert any("WARNING low_conf" in note for note in notes)
     assert any("anchor=пословни приходи" in note for note in notes)
+
+
+def test_main_reports_xls_conversion_requirement(monkeypatch: pytest.MonkeyPatch, tmp_path, caplog):
+    xls_path = tmp_path / "input.xls"
+    xls_path.write_text("dummy")
+
+    monkeypatch.setattr(
+        app,
+        "parse_args",
+        lambda argv=None: SimpleNamespace(excel=str(xls_path), year=None, force=False, debug=False),
+    )
+    monkeypatch.setattr(app, "load_config", lambda path: {"log_path": tmp_path / "log.log"})
+
+    def fake_configure_logging(*, debug: bool, log_path: Path):
+        logger = logging.getLogger("finstat-test")
+        logger.setLevel(logging.DEBUG if debug else logging.INFO)
+        logger.propagate = True
+        return logger
+
+    monkeypatch.setattr(app, "configure_logging", fake_configure_logging)
+    monkeypatch.setattr(app, "configure_dependencies", lambda config, logger: None)
+    def raise_invalid(*args, **kwargs):
+        raise InvalidFileException("legacy")
+
+    monkeypatch.setattr(app.excel_io, "load_workbook", raise_invalid)
+
+    with caplog.at_level(logging.ERROR):
+        exit_code = app.main([])
+
+    assert exit_code == 2
+    assert any("convert it to .xlsx" in record.getMessage() for record in caplog.records)
 
 
 def test_extract_single_field_marks_missing_on_error(monkeypatch: pytest.MonkeyPatch):

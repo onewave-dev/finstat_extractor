@@ -127,6 +127,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     except DependencyError as exc:
         logger.error("%s", exc)
         return 2
+    except excel_io.UnsupportedExcelFormatError as exc:
+        logger.error("%s", exc)
+        return 2
     except FileNotFoundError as exc:
         logger.error("%s", exc)
         return 2
