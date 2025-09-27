@@ -15,7 +15,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import yaml
 
-from io import excel_io
+from excel_io_pkg import excel_io
 from index import pdf_index
 from ocr import ocr_engine
 from extract.models import ExtractionMessage, ExtractionResult

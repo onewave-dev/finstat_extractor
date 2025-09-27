@@ -1,21 +1,10 @@
-"""Tests for :mod:`io.excel_io`."""
+"""Tests for :mod:`excel_io_pkg.excel_io`."""
 
 from __future__ import annotations
 
-import importlib.util
-import sys
-from pathlib import Path
-
 from openpyxl import Workbook
 
-ROOT = Path(__file__).resolve().parents[1]
-spec = importlib.util.spec_from_file_location(
-    "project_excel_io", ROOT / "io" / "excel_io.py"
-)
-excel_io = importlib.util.module_from_spec(spec)
-assert spec.loader is not None
-sys.modules[spec.name] = excel_io
-spec.loader.exec_module(excel_io)
+from excel_io_pkg import excel_io
 
 
 def _create_sheet():

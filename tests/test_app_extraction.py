@@ -2,44 +2,15 @@
 
 from __future__ import annotations
 
-import importlib
-import importlib.util
 import logging
-import sys
 from pathlib import Path
-from types import ModuleType, SimpleNamespace
+from types import SimpleNamespace
 
 import pytest
 
 from extract.models import ExtractionResult
 
-
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-
-
-def _load_app_module():
-    builtin_io = importlib.import_module("io")
-    proxy_io = ModuleType("io")
-    proxy_io.__dict__.update(vars(builtin_io))
-
-    excel_spec = importlib.util.spec_from_file_location("io.excel_io", PROJECT_ROOT / "io" / "excel_io.py")
-    assert excel_spec and excel_spec.loader
-    excel_module = importlib.util.module_from_spec(excel_spec)
-    sys.modules["io.excel_io"] = excel_module
-    excel_spec.loader.exec_module(excel_module)
-
-    proxy_io.excel_io = excel_module
-    sys.modules["io"] = proxy_io
-
-    app_spec = importlib.util.spec_from_file_location("app", PROJECT_ROOT / "app.py")
-    assert app_spec and app_spec.loader
-    module = importlib.util.module_from_spec(app_spec)
-    sys.modules["app"] = module
-    app_spec.loader.exec_module(module)
-    return module
-
-
-app = _load_app_module()
+import app
 
 
 class DummyEngine:
