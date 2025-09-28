@@ -1,7 +1,39 @@
 tesseract_path: "C:\\Users\\jn432pw\\AppData\\Local\\Programs\\Tesseract-OCR\\tesseract.exe"
 poppler_bin_dir: "C:\\Users\\jn432pw\\Documents\\my_automation\\utils\\poppler-25.07.0\\Library\\bin"
 ocr_langs: "srp+srp_latn"
+numeric_langs: "eng"
 dpi: 300
+text_psm: 6
+tsv_psm: 4
+numeric_psm: 13
+dpi_retry:
+  - 400
+confidence_threshold: 70
+enable_pdf_text: true
 year_preference: "current"
 page_limit: 30
 overwrite_nonempty: false
+preprocessing:
+  enabled: true
+  pipeline:
+    - grayscale
+    - denoise
+    - adaptive_threshold
+    - morphology
+    - deskew
+  denoise:
+    method: median
+    median_kernel: 3
+  adaptive_threshold:
+    method: gaussian
+    block_size: 31
+    c: 5
+  morphology:
+    operation: open
+    kernel_size: 3
+    iterations: 1
+diagnostics:
+  enabled: false
+  dir: logs/diagnostics
+  save_preprocessed_pages: false
+  save_numeric_crops: false

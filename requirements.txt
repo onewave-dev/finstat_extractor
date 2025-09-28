@@ -11,3 +11,6 @@ loguru==0.7.2
 SQLAlchemy==2.0.35
 PyYAML==6.0.2
 pytest==8.3.3
+numpy==2.1.1
+opencv-python==4.10.0.84
+pdfplumber==0.11.4
