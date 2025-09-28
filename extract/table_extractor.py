@@ -161,6 +161,7 @@ def extract_field_from_ocr(
     last_anchor_line: Optional[OcrLine] = None
     last_column: Optional[ColumnPosition] = None
     last_columns: Optional[Dict[str, ColumnPosition]] = None
+    last_aop_column: Optional[ColumnPosition] = None
 
     for page in ocr_result.pages:
         page_lines = list(_build_lines(page))
@@ -171,11 +172,17 @@ def extract_field_from_ocr(
         if page_columns:
             last_columns = page_columns
 
+        page_aop_column = _detect_aop_column(page_lines)
+        if page_aop_column is not None:
+            last_aop_column = page_aop_column
+
         candidate_columns: Dict[str, ColumnPosition] = {}
         if page_columns:
             candidate_columns = page_columns
         elif last_columns:
             candidate_columns = last_columns
+
+        aop_column = page_aop_column or last_aop_column
 
         for line in _find_anchor_lines(page_lines, anchor_def):
             detected_anchor = True
@@ -187,7 +194,7 @@ def extract_field_from_ocr(
                 last_column = column
 
             candidate_clusters, clusters = _locate_numeric_cluster(
-                line, column, page_lines
+                line, column, page_lines, aop_column
             )
             if not candidate_clusters:
                 if column_diag and column is None:
@@ -478,6 +485,30 @@ def _detect_year_columns(
     return result
 
 
+def _detect_aop_column(lines: Sequence[OcrLine]) -> Optional[ColumnPosition]:
+    target_tokens = {"aop", "аоп"}
+    best: Optional[ColumnPosition] = None
+
+    for band in _group_words_into_vertical_bands(lines):
+        tokens = [token for _, token in band.filtered_words]
+        if not tokens:
+            continue
+        if not any(token in target_tokens for token in tokens):
+            continue
+        candidate = ColumnPosition(
+            label="aop",
+            page_number=band.page_number,
+            left=band.left,
+            right=band.right,
+            top=band.top,
+            bottom=band.bottom,
+            text=band.text.strip(),
+        )
+        best = _pick_topmost(best, candidate)
+
+    return best
+
+
 def _normalise_token(token: str) -> str:
     return "".join(ch for ch in token.lower() if ch.isalnum())
 
@@ -630,6 +661,7 @@ def _locate_numeric_cluster(
     anchor_line: OcrLine,
     column: Optional[ColumnPosition],
     page_lines: Sequence[OcrLine],
+    aop_column: Optional[ColumnPosition],
 ) -> Tuple[List[NumericCluster], List[NumericCluster]]:
     anchor_right = anchor_line.right
     anchor_top = anchor_line.top
@@ -664,6 +696,21 @@ def _locate_numeric_cluster(
     filtered = [cluster for cluster in clusters if cluster.right >= anchor_right - 5]
     if not filtered:
         filtered = list(clusters)
+
+    if aop_column is not None:
+        filtered_no_aop = [
+            cluster
+            for cluster in filtered
+            if not _cluster_in_aop_zone(cluster, aop_column)
+        ]
+        if not filtered_no_aop:
+            filtered_no_aop = [
+                cluster
+                for cluster in clusters
+                if not _cluster_in_aop_zone(cluster, aop_column)
+            ]
+        if filtered_no_aop:
+            filtered = filtered_no_aop
 
     def _distance_key(cluster: NumericCluster) -> Tuple[float, float, float]:
         if column:
@@ -757,6 +804,14 @@ def _make_cluster(words: List[OcrWord]) -> NumericCluster:
 def _looks_like_formula(text: str) -> bool:
     normalized = text.upper()
     return "+" in text or "=" in text or "АОП" in normalized
+
+
+def _cluster_in_aop_zone(
+    cluster: NumericCluster, aop_column: ColumnPosition
+) -> bool:
+    center = cluster.center_x
+    margin = 3
+    return (aop_column.left - margin) <= center <= (aop_column.right + margin)
 
 
 __all__ = ["extract_field_from_ocr"]
