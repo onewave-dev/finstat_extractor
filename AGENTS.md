@@ -97,6 +97,7 @@ finstat_extractor/
   - BU: `(?i)пословни\s+приходи`
   - BS-1: `(?i)укупна\s+актива`
   - BS-2: `(?i)губитак\s+изнад\s+висине\s+капитала`
+- The extractor recognises uppercase, hyphenated and Latin variants of the row anchors (e.g. `POSLOVNI-PRIHODI`, `UKUPNA AKTIVA`, `КАПИТАЛ`) and has dedicated fallbacks for the AOP codes (`1001`, `0059`, `0401`). When a textual anchor is missing `_find_anchor_lines` will synthesise a combined row around the detected AOP code and tag it with `metadata["aop_fallback"] = True`; `_locate_numeric_cluster` must keep using the AOP column bounds in this mode so that split numeric tokens are preserved.
 - Year columns (headers; locate X ranges by bbox):
   - `(?i)текућ[ае]\s+годин[ае]` → prefer by default
   - `(?i)претходн[ае]\s+годин[ае]`
