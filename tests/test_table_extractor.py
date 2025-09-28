@@ -281,6 +281,47 @@ def test_extract_field_skips_aop_cluster_between_anchor_and_value():
     assert result.column_label is None
 
 
+def test_extract_field_respects_selected_column_boundary():
+    rows: List[dict] = []
+    rows.append(
+        _word(text="Текућа", left=300, top=60, line=1, word_num=1)
+    )
+    rows.append(
+        _word(text="година", left=380, top=60, line=1, word_num=2)
+    )
+    rows.append(
+        _word(text="Претходна", left=520, top=60, line=1, word_num=3)
+    )
+    rows.append(
+        _word(text="година", left=640, top=60, line=1, word_num=4)
+    )
+
+    rows.append(
+        _word(text="Пословни", left=120, top=160, line=2, word_num=1)
+    )
+    rows.append(
+        _word(text="приходи", left=220, top=160, line=2, word_num=2)
+    )
+    rows.append(
+        _word(text="123", left=360, top=160, line=2, word_num=3)
+    )
+    rows.append(
+        _word(text="456", left=560, top=160, line=2, word_num=4)
+    )
+
+    result = extract_field_from_ocr(
+        _result_from_rows(rows),
+        anchor_key="bu_revenue",
+        field_name="revenue",
+        year_preference="current",
+    )
+
+    assert result.success
+    assert result.value == 123
+    assert result.column_label == "current"
+    assert result.raw_text == "123"
+
+
 def test_extract_field_uses_value_from_overlapping_line_to_right():
     rows: List[dict] = []
     rows.append(

@@ -194,7 +194,7 @@ def extract_field_from_ocr(
                 last_column = column
 
             candidate_clusters, clusters = _locate_numeric_cluster(
-                line, column, page_lines, aop_column
+                line, column, page_lines, aop_column, candidate_columns
             )
             if not candidate_clusters:
                 if column_diag and column is None:
@@ -662,16 +662,54 @@ def _locate_numeric_cluster(
     column: Optional[ColumnPosition],
     page_lines: Sequence[OcrLine],
     aop_column: Optional[ColumnPosition],
+    columns: Optional[Dict[str, ColumnPosition]] = None,
 ) -> Tuple[List[NumericCluster], List[NumericCluster]]:
-    anchor_right = anchor_line.right
+    anchor_line_right = anchor_line.right
     anchor_top = anchor_line.top
     anchor_bottom = anchor_line.bottom
 
+    anchor_text_right_candidates = [
+        word.right
+        for word in anchor_line.words
+        if word.text.strip() and not _is_numeric_like(word.text)
+    ]
+    anchor_right = max(anchor_text_right_candidates, default=anchor_line_right)
+
     relevant_words: List[OcrWord] = []
+    all_relevant_words: List[OcrWord] = []
+
+    column_tolerance = 8
+    column_left_bound: Optional[float] = None
+    column_right_bound: Optional[float] = None
+    if column is not None:
+        column_left_bound, column_right_bound = _compute_column_bounds(
+            column,
+            columns,
+            anchor_right=anchor_right,
+            anchor_line_right=anchor_line_right,
+        )
+
+    def _word_in_selected_column(word: OcrWord) -> bool:
+        if column is None or column_left_bound is None or column_right_bound is None:
+            return True
+        column_left = column_left_bound - column_tolerance
+        column_right = column_right_bound + column_tolerance
+        word_center = (word.left + word.right) / 2.0
+        if word.right < column_left or word.left > column_right:
+            return False
+        if column_left <= word_center <= column_right:
+            return True
+        if word.left >= column_left and word.right <= column_right:
+            return True
+        return False
 
     for word in anchor_line.words:
-        if word.text.strip():
-            relevant_words.append(word)
+        if not word.text.strip():
+            continue
+        all_relevant_words.append(word)
+        if not _word_in_selected_column(word):
+            continue
+        relevant_words.append(word)
 
     for line in page_lines:
         if line is anchor_line:
@@ -687,11 +725,39 @@ def _locate_numeric_cluster(
                 continue
             if word.right < anchor_right - 5:
                 continue
+            all_relevant_words.append(word)
+            if not _word_in_selected_column(word):
+                continue
             relevant_words.append(word)
 
     clusters = _build_numeric_clusters(relevant_words)
+    used_column_words = bool(relevant_words)
+    if column is not None and not clusters:
+        clusters = _build_numeric_clusters(all_relevant_words)
+        used_column_words = False
     if not clusters:
         return [], clusters
+
+    if (
+        column is not None
+        and used_column_words
+        and column_left_bound is not None
+        and column_right_bound is not None
+    ):
+        column_left = column_left_bound - column_tolerance
+        column_right = column_right_bound + column_tolerance
+        column_limited_clusters: List[NumericCluster] = []
+        for cluster in clusters:
+            words_in_column = [
+                word for word in cluster.words if _word_in_selected_column(word)
+            ]
+            if not words_in_column:
+                continue
+            for sub_cluster in _build_numeric_clusters(words_in_column):
+                column_limited_clusters.append(sub_cluster)
+        clusters = column_limited_clusters
+        if not clusters:
+            return [], clusters
 
     filtered = [cluster for cluster in clusters if cluster.right >= anchor_right - 5]
     if not filtered:
@@ -712,6 +778,8 @@ def _locate_numeric_cluster(
         if filtered_no_aop:
             filtered = filtered_no_aop
 
+    anchor_sort_right = anchor_line_right
+
     def _distance_key(cluster: NumericCluster) -> Tuple[float, float, float]:
         if column:
             column_center = column.center_x
@@ -721,8 +789,8 @@ def _locate_numeric_cluster(
                 cluster.left,
             )
         return (
-            0.0 if cluster.left >= anchor_right else 1.0,
-            abs(cluster.left - anchor_right),
+            0.0 if cluster.left >= anchor_sort_right else 1.0,
+            abs(cluster.left - anchor_sort_right),
             cluster.left,
         )
 
@@ -804,6 +872,57 @@ def _make_cluster(words: List[OcrWord]) -> NumericCluster:
 def _looks_like_formula(text: str) -> bool:
     normalized = text.upper()
     return "+" in text or "=" in text or "АОП" in normalized
+
+
+def _compute_column_bounds(
+    column: ColumnPosition,
+    columns: Optional[Dict[str, ColumnPosition]],
+    *,
+    anchor_right: Optional[int] = None,
+    anchor_line_right: Optional[int] = None,
+) -> Tuple[float, float]:
+    same_page_columns: List[ColumnPosition] = []
+    if columns:
+        for candidate in columns.values():
+            if candidate.page_number != column.page_number:
+                continue
+            same_page_columns.append(candidate)
+    if not any(candidate is column for candidate in same_page_columns):
+        same_page_columns.append(column)
+
+    column_center = column.center_x
+    left_neighbor: Optional[float] = None
+    right_neighbor: Optional[float] = None
+    for candidate in same_page_columns:
+        center = candidate.center_x
+        if center < column_center:
+            if left_neighbor is None or center > left_neighbor:
+                left_neighbor = center
+        elif center > column_center:
+            if right_neighbor is None or center < right_neighbor:
+                right_neighbor = center
+
+    width = max(column.right - column.left, 1)
+    base_extension = max(width * 1.5, 80.0)
+
+    if left_neighbor is not None:
+        left_bound = (left_neighbor + column_center) / 2.0
+    else:
+        left_bound = column.left - base_extension
+    if anchor_right is not None:
+        left_bound = max(left_bound, float(anchor_right))
+
+    if right_neighbor is not None:
+        right_bound = (right_neighbor + column_center) / 2.0
+    else:
+        right_bound = column.right + base_extension
+        if anchor_line_right is not None:
+            right_bound = max(right_bound, float(anchor_line_right))
+
+    if right_bound <= left_bound:
+        right_bound = left_bound + max(width, base_extension / 2.0)
+
+    return left_bound, right_bound
 
 
 def _cluster_in_aop_zone(
