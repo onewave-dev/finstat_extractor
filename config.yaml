@@ -3,5 +3,5 @@ poppler_bin_dir: "C:\\Users\\jn432pw\\Documents\\my_automation\\utils\\poppler-2
 ocr_langs: "srp+srp_latn"
 dpi: 300
 year_preference: "current"
-page_limit: 2
+page_limit: 30
 overwrite_nonempty: false

@@ -18,6 +18,7 @@ from pytesseract import Output, TesseractError
 
 DEFAULT_CACHE_PATH = Path("cache") / "cache.sqlite"
 DEFAULT_LOG_PATH = Path("logs") / "finstat_extractor.log"
+DEFAULT_PAGE_LIMIT = 30
 
 
 class OCRProcessingError(RuntimeError):
@@ -140,7 +141,26 @@ class OCREngine:
 
     def _render_pdf(self, pdf_path: Path) -> List["Image.Image"]:
         dpi = int(self.config.get("dpi", 300))
-        page_limit = int(self.config.get("page_limit", 2))
+        page_limit_raw = self.config.get("page_limit")
+        page_limit = DEFAULT_PAGE_LIMIT
+        if page_limit_raw is not None:
+            try:
+                parsed_limit = int(page_limit_raw)
+            except (TypeError, ValueError):
+                self.logger.warning(
+                    "Invalid page_limit=%r in config; defaulting to %s pages",
+                    page_limit_raw,
+                    DEFAULT_PAGE_LIMIT,
+                )
+            else:
+                if parsed_limit > 0:
+                    page_limit = parsed_limit
+                else:
+                    self.logger.warning(
+                        "Configured page_limit=%s is not positive; defaulting to %s pages",
+                        parsed_limit,
+                        DEFAULT_PAGE_LIMIT,
+                    )
         poppler_dir = self.config.get("poppler_bin_dir")
 
         info = pdfinfo_from_path(str(pdf_path), poppler_path=poppler_dir)
@@ -149,17 +169,23 @@ class OCREngine:
             self.logger.warning("PDF has zero pages: %s", pdf_path)
             return []
 
-        last_page = min(page_limit, page_count) if page_limit else page_count
+        last_page = min(page_limit, page_count)
 
         kwargs = {
             "dpi": dpi,
             "first_page": 1,
             "poppler_path": poppler_dir,
         }
-        if last_page:
-            kwargs["last_page"] = last_page
+        kwargs["last_page"] = last_page
 
         images = convert_from_path(str(pdf_path), **kwargs)
+        if page_count > page_limit:
+            self.logger.warning(
+                "Processed only the first %s pages out of %s in %s due to the configured page limit.",
+                page_limit,
+                page_count,
+                pdf_path,
+            )
         return images
 
     def _run_tesseract(
