@@ -85,12 +85,12 @@ def normalize_numeric_string(
     if raw is None:
         raise NumericParseError("No value supplied")
 
-    text = str(raw).strip()
-    if not text:
-        raise NumericParseError("Empty string")
-
+    text = str(raw)
     text = text.replace("\u00a0", " ")
     text = text.replace("\u2013", "-").replace("\u2014", "-")
+    text = text.strip()
+    if not text:
+        return NumericParseResult(value=0, normalized_text="0")
 
     text, was_parenthesised = _strip_parentheses(text)
     text, sign = _normalise_sign(text)

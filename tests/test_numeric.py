@@ -26,7 +26,7 @@ def test_normalize_numeric_string_understands_parentheses_as_negative():
     assert result.normalized_text == "-12345"
 
 
-@pytest.mark.parametrize("raw", ["abc", "", None])
+@pytest.mark.parametrize("raw", ["abc", None])
 def test_normalize_numeric_string_rejects_invalid_inputs(raw):
     with pytest.raises(NumericParseError):
         normalize_numeric_string(raw)  # type: ignore[arg-type]
@@ -41,3 +41,10 @@ def test_normalize_numeric_string_respects_bounds_and_sign():
 
     with pytest.raises(NumericParseError):
         normalize_numeric_string("11", max_value=10)
+
+
+@pytest.mark.parametrize("raw", ["", "   ", "\u00a0", "\u00a0  "])
+def test_normalize_numeric_string_treats_empty_input_as_zero(raw):
+    result = normalize_numeric_string(raw)
+    assert result.value == 0
+    assert result.normalized_text == "0"
