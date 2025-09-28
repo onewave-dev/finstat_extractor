@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
-from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from ocr import anchors
 from ocr.ocr_engine import OcrPage, OcrResult
@@ -79,6 +79,7 @@ class OcrLine:
     par_num: int
     line_num: int
     words: List[OcrWord]
+    metadata: Optional[Dict[str, Any]] = None
 
     @property
     def text(self) -> str:
@@ -389,8 +390,12 @@ def _find_anchor_lines(
         _normalise_mixed_script(syn).lower() for syn in anchor_def.synonyms
     ]
     matched_line_ids: Set[int] = set()
+    found_any = False
+
     for line in lines:
         text = line.text.strip()
+        if not text:
+            continue
         lowered = text.lower()
         normalized = _normalise_mixed_script(text)
         normalized_lower = normalized.lower()
@@ -401,61 +406,155 @@ def _find_anchor_lines(
             or any(syn in normalized_lower for syn in normalized_synonyms)
         ):
             matched_line_ids.add(id(line))
+            found_any = True
             yield line
 
     band_pattern = anchors.ROW_ANCHOR_PATTERNS.get(anchor_def.key)
-    if band_pattern is None:
+    if band_pattern is not None:
+        for band in _group_words_into_vertical_bands(lines):
+            band_text = band.text
+            if not band_text:
+                continue
+            normalized_band_text = _normalise_mixed_script(band_text)
+            if not band_pattern.search(normalized_band_text):
+                continue
+            entries = band._iter_entries()
+            if not entries:
+                continue
+
+            seen_line_ids: Set[int] = set()
+            lines_in_band: List[OcrLine] = []
+            for line, _ in entries:
+                line_id = id(line)
+                if line_id in seen_line_ids:
+                    continue
+                seen_line_ids.add(line_id)
+                lines_in_band.append(line)
+
+            if any(id(line) in matched_line_ids for line in lines_in_band):
+                continue
+
+            seen_word_ids: Set[int] = set()
+            words: List[OcrWord] = []
+            for line in lines_in_band:
+                for word in line.words:
+                    if not word.text:
+                        continue
+                    word_id = id(word)
+                    if word_id in seen_word_ids:
+                        continue
+                    seen_word_ids.add(word_id)
+                    words.append(word)
+
+            if not words:
+                continue
+
+            words.sort(key=lambda word: (word.top, word.left))
+            reference_line = min(
+                lines_in_band, key=lambda item: (item.top, item.left)
+            )
+
+            matched_line_ids.update(id(line) for line in lines_in_band)
+            found_any = True
+            yield OcrLine(
+                page_number=reference_line.page_number,
+                block_num=reference_line.block_num,
+                par_num=reference_line.par_num,
+                line_num=reference_line.line_num,
+                words=words,
+            )
+
+    if found_any:
         return
 
-    for band in _group_words_into_vertical_bands(lines):
-        band_text = band.text
-        if not band_text:
-            continue
-        normalized_band_text = _normalise_mixed_script(band_text)
-        if not band_pattern.search(normalized_band_text):
-            continue
-        entries = band._iter_entries()
-        if not entries:
-            continue
+    aop_key = f"{anchor_def.key}_aop"
+    aop_pattern = anchors.ROW_ANCHOR_PATTERNS.get(aop_key)
+    if aop_pattern is None:
+        return
 
-        seen_line_ids: Set[int] = set()
-        lines_in_band: List[OcrLine] = []
-        for line, _ in entries:
-            line_id = id(line)
-            if line_id in seen_line_ids:
-                continue
-            seen_line_ids.add(line_id)
-            lines_in_band.append(line)
+    fallback_synonyms = [
+        _normalise_mixed_script(syn).lower()
+        for syn in anchors.ROW_ANCHOR_SYNONYMS.get(aop_key, [])
+    ]
 
-        if any(id(line) in matched_line_ids for line in lines_in_band):
+    def _line_contains_aop(line: OcrLine) -> bool:
+        if not line.words:
+            return False
+        line_text = line.text.strip()
+        normalized_line = _normalise_mixed_script(line_text)
+        if aop_pattern.search(normalized_line) or aop_pattern.search(line_text):
+            return True
+        lowered_line = normalized_line.lower()
+        if any(syn in lowered_line for syn in fallback_synonyms):
+            return True
+        for word in line.words:
+            normalized_word = _normalise_mixed_script(word.text)
+            if aop_pattern.search(normalized_word) or aop_pattern.search(word.text):
+                return True
+            lowered_word = normalized_word.lower()
+            if lowered_word in fallback_synonyms:
+                return True
+        return False
+
+    seen_signatures: Set[Tuple[int, ...]] = set()
+    for base_line in lines:
+        if not _line_contains_aop(base_line):
             continue
+        if not base_line.words:
+            continue
+        heights = [word.height for word in base_line.words if word.height]
+        max_height = max(heights) if heights else 20
+        tolerance = max(30, int(max_height * 2.5))
+        top_bound = min(word.top for word in base_line.words) - tolerance
+        bottom_bound = max(word.bottom for word in base_line.words) + tolerance
 
+        collected_words: List[OcrWord] = []
         seen_word_ids: Set[int] = set()
-        words: List[OcrWord] = []
-        for line in lines_in_band:
-            for word in line.words:
-                if not word.text:
+        for candidate in lines:
+            if candidate.page_number != base_line.page_number:
+                continue
+            if candidate.bottom < top_bound or candidate.top > bottom_bound:
+                continue
+            for word in candidate.words:
+                if not word.text.strip():
+                    continue
+                if word.bottom < top_bound or word.top > bottom_bound:
                     continue
                 word_id = id(word)
                 if word_id in seen_word_ids:
                     continue
                 seen_word_ids.add(word_id)
-                words.append(word)
+                collected_words.append(word)
 
-        if not words:
+        if not collected_words:
             continue
 
-        words.sort(key=lambda word: (word.top, word.left))
+        signature = tuple(sorted(seen_word_ids))
+        if signature in seen_signatures:
+            continue
+        seen_signatures.add(signature)
+
+        collected_words.sort(key=lambda word: (word.top, word.left))
         reference_line = min(
-            lines_in_band, key=lambda item: (item.top, item.left)
+            (
+                candidate
+                for candidate in lines
+                if candidate.page_number == base_line.page_number
+                and candidate.bottom >= top_bound
+                and candidate.top <= bottom_bound
+            ),
+            key=lambda item: (item.top, item.left),
+            default=base_line,
         )
 
+        found_any = True
         yield OcrLine(
             page_number=reference_line.page_number,
             block_num=reference_line.block_num,
             par_num=reference_line.par_num,
             line_num=reference_line.line_num,
-            words=words,
+            words=collected_words,
+            metadata={"aop_fallback": True, "aop_key": aop_key},
         )
 
 
@@ -765,6 +864,9 @@ def _locate_numeric_cluster(
     ]
     anchor_right = max(anchor_text_right_candidates, default=anchor_line_right)
 
+    anchor_metadata = anchor_line.metadata or {}
+    aop_fallback_active = bool(anchor_metadata.get("aop_fallback"))
+
     relevant_words: List[OcrWord] = []
     all_relevant_words: List[OcrWord] = []
 
@@ -779,8 +881,15 @@ def _locate_numeric_cluster(
             anchor_line_right=anchor_line_right,
         )
 
+    anchor_threshold = anchor_right - 5
+    if aop_fallback_active and aop_column is not None:
+        anchor_threshold = min(
+            anchor_threshold,
+            float(aop_column.right + column_tolerance),
+        )
+
     def _word_in_selected_column(word: OcrWord) -> bool:
-        if column is None or column_left_bound is None or column_right_bound is None:
+        if column_left_bound is None or column_right_bound is None:
             return True
         column_left = column_left_bound - column_tolerance
         column_right = column_right_bound + column_tolerance
@@ -808,12 +917,12 @@ def _locate_numeric_cluster(
             continue
         if line.bottom < anchor_top or line.top > anchor_bottom:
             continue
-        if line.left < anchor_right - 5:
+        if line.left < anchor_threshold:
             continue
         for word in line.words:
             if not word.text.strip():
                 continue
-            if word.right < anchor_right - 5:
+            if word.right < anchor_threshold:
                 continue
             all_relevant_words.append(word)
             if not _word_in_selected_column(word):
@@ -849,7 +958,7 @@ def _locate_numeric_cluster(
         if not clusters:
             return [], clusters
 
-    filtered = [cluster for cluster in clusters if cluster.right >= anchor_right - 5]
+    filtered = [cluster for cluster in clusters if cluster.right >= anchor_threshold]
     if not filtered:
         filtered = list(clusters)
 

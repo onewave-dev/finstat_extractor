@@ -87,9 +87,40 @@ FORM_HEADER_SYNONYMS: Dict[str, Iterable[str]] = {
 
 
 ROW_ANCHOR_PATTERNS: Dict[str, Pattern[str]] = {
-    "bu_revenue": re.compile(r"(?i)пословни\s+приходи"),
-    "bs_assets": re.compile(r"(?i)укупна\s+актива"),
-    "bs_loss": re.compile(r"(?i)губитак\s+изнад\s+висине\s+капитала"),
+    "bu_revenue": re.compile(
+        r"""
+        (?ix)
+        (?:пословни|poslovni)
+        [\s\-]*
+        (?:приходи|prihodi)
+        """,
+        re.VERBOSE,
+    ),
+    "bs_assets": re.compile(
+        r"""
+        (?ix)
+        (?:укупна|ukupna)
+        [\s\-]*
+        (?:актива|aktiva)
+        """,
+        re.VERBOSE,
+    ),
+    "bs_loss": re.compile(
+        r"""
+        (?ix)
+        (?:губитак|gubitak)
+        [\s\-]+
+        (?:изнад|iznad)
+        [\s\-]+
+        (?:висине|visine)
+        [\s\-]+
+        (?:капитала|kapitala|капитал|kapital)
+        """,
+        re.VERBOSE,
+    ),
+    "bu_revenue_aop": re.compile(r"\b0*1001\b"),
+    "bs_assets_aop": re.compile(r"\b0*0059\b"),
+    "bs_loss_aop": re.compile(r"\b0*0401\b"),
     "bs_capital_aop0401": re.compile(
         r"""
         (?:
@@ -108,16 +139,45 @@ ROW_ANCHOR_SYNONYMS: Dict[str, Iterable[str]] = {
         "пословни приходи",
         "poslovni prihodi",
         "приходи из пословања",
+        "ПОСЛОВНИ ПРИХОДИ",
+        "POSLOVNI PRIHODI",
+        "пословни-приходи",
+        "poslovni-prihodi",
     ],
     "bs_assets": [
         "укупна актива",
         "ukupna aktiva",
         "укупна актива (у 000 рсд)",
+        "UKUPNA AKTIVA",
+        "УКУПНА АКТИВА",
+        "ukupna-aktiva",
     ],
     "bs_loss": [
         "губитак изнад висине капитала",
         "gubitak iznad visine kapitala",
         "губитак изнад висине капитала (у 000 рсд)",
+        "ГУБИТАК ИЗНАД ВИСИНЕ КАПИТАЛА",
+        "gubitak-iznad-visine-kapitala",
+        "губитак изнад висине капитал",
+        "gubitak iznad visine kapital",
+    ],
+    "bu_revenue_aop": [
+        "1001",
+        "01001",
+        "aop 1001",
+        "аоп 1001",
+    ],
+    "bs_assets_aop": [
+        "0059",
+        "059",
+        "aop 0059",
+        "аоп 0059",
+    ],
+    "bs_loss_aop": [
+        "0401",
+        "401",
+        "aop 0401",
+        "аоп 0401",
     ],
     "bs_capital_aop0401": [
         "a. капитал",

@@ -416,6 +416,27 @@ def test_find_anchor_lines_recognises_mixed_script_bs_anchors():
     assert [line.text for line in loss_matches] == [loss_line.text]
 
 
+def test_find_anchor_lines_uses_aop_fallback_when_text_missing():
+    anchor_map = anchors.build_anchor_map()
+    aop_only_line = OcrLine(
+        page_number=1,
+        block_num=1,
+        par_num=1,
+        line_num=1,
+        words=[
+            _ocr_word("1001", left=60, top=140),
+            _ocr_word("123", left=360, top=140),
+            _ocr_word("456", left=440, top=140),
+        ],
+    )
+
+    matches = list(_find_anchor_lines([aop_only_line], anchor_map["bu_revenue"]))
+
+    assert matches
+    assert matches[0].metadata and matches[0].metadata.get("aop_fallback")
+    assert "1001" in matches[0].text
+
+
 def test_extract_field_handles_mixed_script_bs_assets():
     rows: List[dict] = []
     rows.append(_word(text="Текућа", left=520, top=40, line=1, word_num=1))
@@ -457,6 +478,29 @@ def test_extract_field_handles_mixed_script_bs_loss():
 
     assert result.success
     assert result.value == 654
+    assert result.anchor_text is not None
+
+
+def test_extract_field_uses_aop_fallback_for_missing_anchor():
+    rows: List[dict] = []
+    rows.append(_word(text="АОП", left=60, top=40, line=1, word_num=1))
+    rows.append(_word(text="Текућа", left=200, top=40, line=1, word_num=2))
+    rows.append(_word(text="година", left=280, top=40, line=1, word_num=3))
+
+    rows.append(_word(text="1001", left=60, top=160, line=2, word_num=1))
+    rows.append(_word(text="123", left=360, top=160, line=2, word_num=2))
+    rows.append(_word(text="456", left=440, top=160, line=2, word_num=3))
+
+    result = extract_field_from_ocr(
+        _result_from_rows(rows),
+        anchor_key="bu_revenue",
+        field_name="revenue",
+        year_preference="current",
+    )
+
+    assert result.success
+    assert result.value == 123456
+    assert result.column_label == "current"
     assert result.anchor_text is not None
 
 
