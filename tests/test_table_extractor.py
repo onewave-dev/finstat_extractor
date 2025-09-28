@@ -95,6 +95,20 @@ def _make_line(words: Sequence[OcrWord]) -> OcrLine:
     return OcrLine(page_number=1, block_num=1, par_num=1, line_num=1, words=list(words))
 
 
+@pytest.fixture
+def bs_loss_multiline_result() -> OcrResult:
+    rows: List[dict] = []
+    rows.append(_word(text="Текућа", left=520, top=40, line=1, word_num=1))
+    rows.append(_word(text="година", left=600, top=40, line=1, word_num=2))
+    rows.append(_word(text="Губитак", left=120, top=120, line=2, word_num=1))
+    rows.append(_word(text="изнад", left=122, top=160, line=3, word_num=1))
+    rows.append(_word(text="висине", left=124, top=200, line=4, word_num=1))
+    rows.append(_word(text="капитала", left=210, top=200, line=4, word_num=2))
+    rows.append(_word(text="123", left=360, top=200, line=4, word_num=3))
+    rows.append(_word(text="456", left=440, top=200, line=4, word_num=4))
+    return _result_from_rows(rows)
+
+
 def test_extract_field_prefers_numeric_cluster_right_of_anchor():
     rows: List[dict] = []
     # Year header to detect the "current" column.
@@ -356,3 +370,16 @@ def test_extract_field_detects_reference_year_from_document_text():
     assert result.value == 777
     assert result.column_label == "current"
     assert not result.warnings
+
+
+def test_extract_field_detects_multiline_anchor(bs_loss_multiline_result: OcrResult):
+    result = extract_field_from_ocr(
+        bs_loss_multiline_result,
+        anchor_key="bs_loss",
+        field_name="loss",
+        year_preference="current",
+    )
+
+    assert result.success
+    assert result.value == 123456
+    assert result.anchor_text.lower().startswith("губитак")
