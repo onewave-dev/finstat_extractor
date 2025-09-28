@@ -7,9 +7,12 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from openpyxl import Workbook
 from openpyxl.utils.exceptions import InvalidFileException
 
+from excel_io_pkg import excel_io
 from extract.models import ExtractionResult
+from extract.numeric import normalize_numeric_string
 
 import app
 
@@ -142,3 +145,30 @@ def test_extract_multiple_fields_skips_failed_values(monkeypatch: pytest.MonkeyP
     assert missing == ["assets"]
     assert any(note.startswith("ERROR not_found") for note in notes)
     assert any("WARNING low_conf" in note for note in notes)
+
+
+def test_empty_numeric_string_persists_zero_in_excel():
+    parse_result = normalize_numeric_string("   ")
+    extraction_result = ExtractionResult(field_name="revenue")
+    extraction_result.value = parse_result.value
+    extraction_result.raw_text = "   "
+    extraction_result.normalized_text = parse_result.normalized_text
+
+    value, notes, meta = app._coerce_extractor_result(extraction_result)
+
+    assert value == 0
+    assert notes == []
+    assert meta == {"has_errors": False, "has_warnings": False, "has_value": True}
+    assert extraction_result.success
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Data"
+    sheet.cell(row=1, column=1, value="Матични број")
+    column_map = excel_io.ensure_result_columns(sheet)
+    row_index = 2
+    sheet.cell(row=row_index, column=1, value="12345678")
+
+    updates = excel_io.write_result_row(sheet, row_index, {"revenue": value})
+    assert updates["revenue"]
+    assert sheet.cell(row=row_index, column=column_map["revenue"]).value == 0
