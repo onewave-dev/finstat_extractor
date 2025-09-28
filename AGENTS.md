@@ -14,16 +14,21 @@
   - **Bilans uspeha** (BU) — must include a row labeled **"Пословни приходи"**.
   - **Bilans stanja** (BS) — must include rows **"Укупна актива"** and **"Губитак изнад висине капитала"**.
 - All PDFs lie **beside** the executable (`app.exe`) in the **same directory**. The program assumes **current working directory** is where PDFs are.
+- OCR prerequisites:
+  - **Tesseract language packs**: `srp`, `srp_latn`, `eng` (installed locally and referenced via `config.yaml`).
+  - **Python dependencies**: OpenCV (`opencv-python`), `numpy`, `Pillow`, `pdfplumber` (fallback for text PDFs), in addition to the existing stack (pytesseract, pdf2image, etc.).
+  - **Processing pipeline**: two-pass OCR (page-level anchor detection + cropped numeric pass), OpenCV preprocessing (grayscale → blur → adaptive threshold → deskew), and multi-DPI retries when confidence falls below thresholds.
 
 **Output**
 - The same Excel file with columns **G/H/I** populated:
   - **G:** `Пословни приходи (000 РСД)` ← from **BU**.
   - **H:** `Укупна актива (000 РСД)` ← from **BS**.
-  - **I:** `Губитак изнад висине капитала (000 РСД)` ← from **BS**.
+  - **I:** `Губитак изнад висине капитала (000 РСД)` ← computed as `max(0, −AOP 0401)` and sourced from **BS** numeric cells.
 - Diagnostic artifacts:
   - `report_missing.csv` — per Matični broj, which documents/fields were missing or unreadable.
   - `logs/finstat_extractor.log` — run-time log with INFO/WARN/ERROR.
-  - Optional cache DB `cache/cache.sqlite` to speed up re-runs.
+- Optional cache DB `cache/cache.sqlite` to speed up re-runs.
+- Persisted extraction diagnostics per value (`source_file`, `page_idx`, `method`, `confidence_avg`, numeric result) to aid QA and retries.
 
 **Rules**
 - Match PDFs to Excel **by Matični broj found *inside* each PDF** using OCR.
@@ -61,8 +66,12 @@ finstat_extractor/
 ### 2.2 Data Flow
 1. **Load Excel:** read column **"Матични број"**, normalize MB to 8–9 digits.
 2. **Index PDFs (cwd):** for each `*.pdf`:
-   - Render first 1–2 pages with **Poppler** (300 dpi).
-   - OCR with **Tesseract** (`srp`, `srp_latn`) to **plain text + TSV (with bbox coordinates)**.
+   - Render first 1–2 pages with **Poppler** (300 dpi baseline; allow multi-DPI retries on low confidence).
+   - OCR with **Tesseract** (`srp+srp_latn+eng`) using a **two-pass pipeline**:
+     - **Pass 1:** page-level anchor detection (full-page OCR → TSV with bbox coordinates).
+     - **Pass 2:** cropped numeric regions reprocessed (potentially at higher DPI) for improved confidence.
+   - Apply OpenCV preprocessing before each OCR call: grayscale, denoise/blur, adaptive thresholding, and deskew.
+   - When PDFs are already text-based or OCR confidence remains low after retries, invoke **pdfplumber** as a fallback text extractor.
    - Detect **Matični broj** via regex (both Cyrillic and Latin spellings).
    - Classify document type:
      - BU if header/body matches `Билан(с|c)\s+успеха|Bilans\s+uspeha`.
@@ -70,10 +79,11 @@ finstat_extractor/
    - Insert into index: `{ MB: { bu: [pdf_id...], bs: [pdf_id...] } }`. If multiple, pick the newest by `mtime` (tie-break by detected period if available).
 3. **Extract Values:**
    - BU → find row anchor **"Пословни приходи"**; move horizontally to the **"Текућа година"** numeric cell (or "Претходна" if configured).
-   - BS → find **"Укупна актива"** and **"Губитак изнад висине капитала"** similarly.
+   - BS → find **"Укупна актива"** and **"Губитак изнад висине капитала"** similarly; compute **"Губитак изнад висине капитала"** as `max(0, −AOP 0401)` even if table shows alternative formatting.
    - Use TSV coordinates to search **right of the anchor within the same text-line band**; filter to the nearest numeric token inside the target column window.
    - Normalize numbers: remove thousand separators (`.`/space), convert commas to dot, keep sign, keep as thousands RSD.
-4. **Write Excel:** ensure columns **G/H/I** exist with exact headers; write results per row/MB; leave blank if not found; don’t overwrite non-empty cells unless `--force` is passed.
+   - Persist diagnostics (`source_file`, `page_idx`, OCR `method` used, `confidence_avg`, raw text) for each extracted numeric value.
+4. **Write Excel:** ensure columns **G/H/I** exist with exact headers; write results per row/MB; leave blank if not found; don’t overwrite non-empty cells unless `--force` is passed; include diagnostic metadata alongside numeric values (e.g., via hidden columns or external report) for traceability.
 5. **Reporting:** emit `report_missing.csv` for MBs with absent docs/anchors/numbers; log detailed context.
 
 ### 2.3 OCR Anchors & Regex
@@ -97,11 +107,14 @@ finstat_extractor/
 ```yaml
 tesseract_path: "C:\\Program Files\\Tesseract-OCR\\tesseract.exe"
 poppler_bin_dir: "C:\\tools\\poppler\\bin"     # contains pdftoppm/pdftocairo
-ocr_langs: "srp+srp_latn"
+ocr_langs: "srp+srp_latn+eng"
 dpi: 300
+multi_dpi: [300, 400]
+confidence_threshold: 0.82
 year_preference: "current"  # or "previous"
 page_limit: 2               # first pages to OCR per PDF
 overwrite_nonempty: false
+use_pdfplumber_fallback: true
 ```
 
 ### 2.5 CLI (app.py)
@@ -125,11 +138,13 @@ Notes:
 ### 2.7 Logging & Reporting
 - `logs/finstat_extractor.log` — rotating logs (INFO default; DEBUG via `--debug`).
 - `report_missing.csv` columns: `MB;missing_bu;missing_bs;missing_fields;notes`.
-- Summaries at end: processed rows, filled values, missing counts.
+- Persist structured diagnostics per extracted field (`source_file`, `page_idx`, OCR `method`, `confidence_avg`, raw/normalized value) either inside the log or a companion JSON/CSV for audit.
+- Summaries at end: processed rows, filled values, missing counts, low-confidence retries triggered.
 
 ### 2.8 Edge Cases & Validation
 - **Multiple PDFs** for same MB & form: choose latest by `mtime`; warn on duplicates.
 - **Unreadable scans:** emit warning; suggest rescanning at 300 dpi grayscale.
+- **Low-confidence OCR:** automatically trigger multi-DPI retries, two-pass numeric cropping, and pdfplumber fallback before declaring failure.
 - **Non-numeric cells or misaligned picks:** extra numeric validation (max digits, not all zeros unless plausible).
 - **Excel integrity:** back up original as `filename.bak.xlsx` (optional flag `--backup`).
 
@@ -160,13 +175,15 @@ Notes:
 
 1. **Bootstrap Project**
    - Create directory structure (see §2.1).
-   - Initialize `config.yaml` with sensible defaults.
-   - Add `requirements.txt` (pytesseract, pdf2image, pillow, openpyxl, pandas, regex, python-dateutil, tqdm, click, loguru, sqlalchemy or sqlite3 stdlib).
+   - Initialize `config.yaml` with sensible defaults (OCR langs incl. `eng`, multi-DPI, confidence thresholds, pdfplumber fallback toggle).
+   - Add `requirements.txt` (pytesseract, pdf2image, pillow, openpyxl, pandas, regex, python-dateutil, tqdm, click, loguru, sqlalchemy or sqlite3 stdlib, **opencv-python**, **numpy**, **pdfplumber**).
 
 2. **Implement OCR Engine (`/ocr/ocr_engine.py`)**
    - Wrapper for Poppler (`pdftoppm` or `pdftocairo`) → PIL images (first N pages).
-   - Tesseract calls to produce **plain text** and **TSV** per page.
-   - Return structure: `{ text, tsv_rows (with bbox), page_map }`.
+   - Tesseract calls to produce **plain text** and **TSV** per page, with support for two-pass OCR (anchor + numeric) and multi-DPI retries.
+   - Integrate OpenCV preprocessing (grayscale, blur, adaptive threshold, deskew) before OCR.
+   - Return structure: `{ text, tsv_rows (with bbox), page_map, diagnostics }` capturing confidence averages and methods used.
+   - Fallback to `pdfplumber` text extraction when OCR confidence remains low and the PDF is text-based.
    - File-level caching keyed by hash.
 
 3. **Anchors & Parsing (`/ocr/anchors.py`)**
@@ -175,18 +192,19 @@ Notes:
 
 4. **PDF Indexer (`/index/pdf_index.py`)**
    - Walk `cwd` for `*.pdf`.
-   - For each: OCR; extract MB; detect form type (BU/BS); add to index map.
+   - For each: OCR; extract MB; detect form type (BU/BS); add to index map. Record per-file confidence diagnostics to support multi-DPI retries.
    - Resolve duplicates (prefer latest `mtime`); expose `get_pdf_for(MB, type)`.
 
 5. **Extractors**
    - **BU (`/extract/bu.py`)**: find **"Пословни приходи"** anchor; pick nearest numeric token **in Current/Previous column** using TSV coordinates + column bbox detection.
-   - **BS (`/extract/bs.py`)**: same for **"Укупна актива"** and **"Губитак изнад висине капитала"**.
-   - Robust numeric normalization; return `Decimal` or `int` (thousands).
+   - **BS (`/extract/bs.py`)**: same for **"Укупна актива"** and **"Губитак изнад висине капитала"**; enforce `max(0, −AOP 0401)` logic.
+   - Robust numeric normalization; return `Decimal` or `int` (thousands) plus diagnostics.
 
 6. **Excel IO (`/io/excel_io.py`)**
    - Read Excel → list of rows with `MB` and row indices.
    - Ensure/create columns **G/H/I** with exact headers.
    - Write values; respect `overwrite_nonempty` flag; save workbook.
+   - Persist diagnostic metadata alongside values (hidden columns or external sheet/report) capturing source file, page, method, and confidence.
 
 7. **CLI Orchestration (`app.py`)**
    - Parse args (`--excel`, `--year`, `--force`, `--debug`).
@@ -206,7 +224,7 @@ Notes:
 ---
 
 ## 4) End-User Notes (to include in README)
-1. Install **Tesseract OCR** (with `srp`, `srp_latn`) and **Poppler**; add both to `PATH` or set paths in `config.yaml`.
+1. Install **Tesseract OCR** (with language packs `srp`, `srp_latn`, `eng`) and **Poppler**; add both to `PATH` or set paths in `config.yaml`.
 2. Place `app.exe`, the **Excel**, and all **PDFs** in the **same folder**.
 3. Run from that folder:
    ```
