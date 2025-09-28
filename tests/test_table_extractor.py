@@ -206,7 +206,6 @@ def test_extract_field_falls_back_to_previous_year_when_preferred_missing():
 )
 def test_detect_year_columns_handles_textual_variants(monkeypatch, words):
     reference_year = 2024
-    monkeypatch.setattr(anchors, "get_reference_year", lambda: reference_year)
     line = _make_line(
         [
             _ocr_word(text, left=left, top=40)
@@ -214,7 +213,7 @@ def test_detect_year_columns_handles_textual_variants(monkeypatch, words):
         ]
     )
 
-    columns = _detect_year_columns([line])
+    columns = _detect_year_columns([line], reference_year=reference_year)
 
     assert "current" in columns
     assert columns["current"].label == "current"
@@ -223,7 +222,6 @@ def test_detect_year_columns_handles_textual_variants(monkeypatch, words):
 
 @pytest.mark.parametrize("reference_year", [2024, 2025])
 def test_detect_year_columns_handles_numeric_years(monkeypatch, reference_year):
-    monkeypatch.setattr(anchors, "get_reference_year", lambda: reference_year)
     line = _make_line(
         [
             _ocr_word(str(reference_year - 1), left=80, top=30),
@@ -231,7 +229,7 @@ def test_detect_year_columns_handles_numeric_years(monkeypatch, reference_year):
         ]
     )
 
-    columns = _detect_year_columns([line])
+    columns = _detect_year_columns([line], reference_year=reference_year)
 
     assert columns["current"].label == "current"
     assert columns["current"].left == 200
@@ -241,7 +239,6 @@ def test_detect_year_columns_handles_numeric_years(monkeypatch, reference_year):
 
 def test_detect_year_columns_handles_multiline_headers(monkeypatch):
     reference_year = 2024
-    monkeypatch.setattr(anchors, "get_reference_year", lambda: reference_year)
     top_line = OcrLine(
         page_number=1,
         block_num=1,
@@ -257,7 +254,7 @@ def test_detect_year_columns_handles_multiline_headers(monkeypatch):
         words=[_ocr_word("година", left=118, top=80)],
     )
 
-    columns = _detect_year_columns([top_line, bottom_line])
+    columns = _detect_year_columns([top_line, bottom_line], reference_year=reference_year)
 
     assert "current" in columns
     current = columns["current"]
@@ -268,7 +265,6 @@ def test_detect_year_columns_handles_multiline_headers(monkeypatch):
 
 def test_detect_year_columns_uses_regex_fallback_when_synonyms_missing(monkeypatch):
     reference_year = 2024
-    monkeypatch.setattr(anchors, "get_reference_year", lambda: reference_year)
     monkeypatch.setattr(
         anchors,
         "get_year_column_synonyms",
@@ -296,7 +292,9 @@ def test_detect_year_columns_uses_regex_fallback_when_synonyms_missing(monkeypat
         words=[_ocr_word("(у 000 РСД)", left=146, top=95, width=120)],
     )
 
-    columns = _detect_year_columns([top_line, middle_line, suffix_line])
+    columns = _detect_year_columns(
+        [top_line, middle_line, suffix_line], reference_year=reference_year
+    )
 
     assert "current" in columns
     current = columns["current"]
@@ -326,5 +324,35 @@ def test_extract_field_reuses_columns_from_previous_page():
 
     assert result.success
     assert result.value == 123
+    assert result.column_label == "current"
+    assert not result.warnings
+
+
+def test_extract_field_detects_reference_year_from_document_text():
+    reporting_year = 2035
+    rows: List[dict] = []
+    rows.append(
+        _word(text=str(reporting_year - 1), left=120, top=40, line=1, word_num=1)
+    )
+    rows.append(
+        _word(text=str(reporting_year), left=260, top=40, line=1, word_num=2)
+    )
+    rows.append(
+        _word(text="Пословни", left=140, top=150, line=2, word_num=3)
+    )
+    rows.append(
+        _word(text="приходи", left=240, top=150, line=2, word_num=4)
+    )
+    rows.append(_word(text="777", left=360, top=150, line=2, word_num=5))
+
+    result = extract_field_from_ocr(
+        _result_from_rows(rows),
+        anchor_key="bu_revenue",
+        field_name="revenue",
+        year_preference="current",
+    )
+
+    assert result.success
+    assert result.value == 777
     assert result.column_label == "current"
     assert not result.warnings
