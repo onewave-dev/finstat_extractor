@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from ocr import anchors
 from ocr.ocr_engine import OcrPage, OcrResult
@@ -319,13 +319,69 @@ def _find_anchor_lines(
     lines: Sequence[OcrLine], anchor_def: anchors.AnchorDefinition
 ) -> Iterable[OcrLine]:
     lowered_synonyms = [syn.lower() for syn in anchor_def.synonyms]
+    matched_line_ids: Set[int] = set()
     for line in lines:
         text = line.text.strip()
         lowered = text.lower()
         if anchor_def.pattern.search(lowered) or any(
             syn in lowered for syn in lowered_synonyms
         ):
+            matched_line_ids.add(id(line))
             yield line
+
+    band_pattern = anchors.ROW_ANCHOR_PATTERNS.get(anchor_def.key)
+    if band_pattern is None:
+        return
+
+    for band in _group_words_into_vertical_bands(lines):
+        band_text = band.text
+        if not band_text:
+            continue
+        if not band_pattern.search(band_text):
+            continue
+        entries = band._iter_entries()
+        if not entries:
+            continue
+
+        seen_line_ids: Set[int] = set()
+        lines_in_band: List[OcrLine] = []
+        for line, _ in entries:
+            line_id = id(line)
+            if line_id in seen_line_ids:
+                continue
+            seen_line_ids.add(line_id)
+            lines_in_band.append(line)
+
+        if any(id(line) in matched_line_ids for line in lines_in_band):
+            continue
+
+        seen_word_ids: Set[int] = set()
+        words: List[OcrWord] = []
+        for line in lines_in_band:
+            for word in line.words:
+                if not word.text:
+                    continue
+                word_id = id(word)
+                if word_id in seen_word_ids:
+                    continue
+                seen_word_ids.add(word_id)
+                words.append(word)
+
+        if not words:
+            continue
+
+        words.sort(key=lambda word: (word.top, word.left))
+        reference_line = min(
+            lines_in_band, key=lambda item: (item.top, item.left)
+        )
+
+        yield OcrLine(
+            page_number=reference_line.page_number,
+            block_num=reference_line.block_num,
+            par_num=reference_line.par_num,
+            line_num=reference_line.line_num,
+            words=words,
+        )
 
 
 def _detect_year_columns(
