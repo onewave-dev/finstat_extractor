@@ -15,6 +15,7 @@ from extract.models import ExtractionResult
 from extract.numeric import normalize_numeric_string
 
 import app
+from index import pdf_index
 
 
 class DummyEngine:
@@ -172,3 +173,29 @@ def test_empty_numeric_string_persists_zero_in_excel():
     updates = excel_io.write_result_row(sheet, row_index, {"revenue": value})
     assert updates["revenue"]
     assert sheet.cell(row=row_index, column=column_map["revenue"]).value == 0
+
+
+def test_pdf_with_bu_and_bs_headers_is_registered_under_both(tmp_path):
+    pdf_path = tmp_path / "dual-form.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n")
+
+    text = (
+        "Maticni broj: 12345678\n"
+        "Bilans USPEHA\n"
+        "BILANS STANJA\n"
+    )
+
+    class StubOcrEngine:
+        def get_or_run_ocr(self, path):  # pragma: no cover - trivial stub
+            assert path == pdf_path
+            return {"text": text}
+
+    index = pdf_index.build_index(directory=tmp_path, ocr_provider=StubOcrEngine())
+
+    bu_entry = index.get_latest("12345678", "bu", preferred_period=None)
+    bs_entry = index.get_latest("12345678", "bs", preferred_period=None)
+
+    assert bu_entry is not None
+    assert bs_entry is not None
+    assert bu_entry.path == pdf_path
+    assert bs_entry.path == pdf_path
