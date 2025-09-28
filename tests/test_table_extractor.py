@@ -10,6 +10,7 @@ from extract.table_extractor import (
     OcrLine,
     OcrWord,
     _detect_year_columns,
+    _find_anchor_lines,
     extract_field_from_ocr,
 )
 from ocr.ocr_engine import OcrPage, OcrResult
@@ -358,6 +359,30 @@ def test_extract_field_uses_value_from_overlapping_line_to_right():
     assert result.success
     assert result.value == 123
     assert result.column_label == "current"
+
+
+def test_find_anchor_lines_recognises_mixed_script_bs_anchors():
+    anchor_map = anchors.build_anchor_map()
+    assets_line = _make_line(
+        [
+            _ocr_word("Уkупна", left=120, top=120),
+            _ocr_word("акtива", left=240, top=120),
+        ]
+    )
+    loss_line = _make_line(
+        [
+            _ocr_word("губитаk", left=120, top=200),
+            _ocr_word("изнад", left=220, top=200),
+            _ocr_word("висине", left=320, top=200),
+            _ocr_word("капитала", left=420, top=200),
+        ]
+    )
+
+    asset_matches = list(_find_anchor_lines([assets_line, loss_line], anchor_map["bs_assets"]))
+    loss_matches = list(_find_anchor_lines([assets_line, loss_line], anchor_map["bs_loss"]))
+
+    assert [line.text for line in asset_matches] == [assets_line.text]
+    assert [line.text for line in loss_matches] == [loss_line.text]
 
 
 def test_extract_field_handles_mixed_script_bs_assets():
