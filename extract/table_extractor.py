@@ -13,6 +13,40 @@ from .models import ExtractionMessage, ExtractionResult
 from .numeric import NumericParseError, normalize_numeric_string
 
 
+_VISUALLY_SIMILAR_TRANSLATION = str.maketrans(
+    {
+        "A": "А",
+        "B": "В",
+        "C": "С",
+        "E": "Е",
+        "H": "Н",
+        "h": "н",
+        "K": "К",
+        "M": "М",
+        "O": "О",
+        "P": "Р",
+        "T": "Т",
+        "X": "Х",
+        "Y": "У",
+        "a": "а",
+        "c": "с",
+        "e": "е",
+        "o": "о",
+        "p": "р",
+        "x": "х",
+        "y": "у",
+        "J": "Ј",
+        "j": "ј",
+    }
+)
+
+
+def _normalise_mixed_script(text: str) -> str:
+    """Return ``text`` where visually identical Latin characters use Cyrillic forms."""
+
+    return text.translate(_VISUALLY_SIMILAR_TRANSLATION)
+
+
 @dataclass
 class OcrWord:
     text: str
@@ -329,12 +363,20 @@ def _find_anchor_lines(
     lines: Sequence[OcrLine], anchor_def: anchors.AnchorDefinition
 ) -> Iterable[OcrLine]:
     lowered_synonyms = [syn.lower() for syn in anchor_def.synonyms]
+    normalized_synonyms = [
+        _normalise_mixed_script(syn).lower() for syn in anchor_def.synonyms
+    ]
     matched_line_ids: Set[int] = set()
     for line in lines:
         text = line.text.strip()
         lowered = text.lower()
-        if anchor_def.pattern.search(lowered) or any(
-            syn in lowered for syn in lowered_synonyms
+        normalized = _normalise_mixed_script(text)
+        normalized_lower = normalized.lower()
+        if (
+            anchor_def.pattern.search(normalized)
+            or anchor_def.pattern.search(text)
+            or any(syn in lowered for syn in lowered_synonyms)
+            or any(syn in normalized_lower for syn in normalized_synonyms)
         ):
             matched_line_ids.add(id(line))
             yield line
@@ -347,7 +389,8 @@ def _find_anchor_lines(
         band_text = band.text
         if not band_text:
             continue
-        if not band_pattern.search(band_text):
+        normalized_band_text = _normalise_mixed_script(band_text)
+        if not band_pattern.search(normalized_band_text):
             continue
         entries = band._iter_entries()
         if not entries:
@@ -486,7 +529,7 @@ def _detect_year_columns(
 
 
 def _detect_aop_column(lines: Sequence[OcrLine]) -> Optional[ColumnPosition]:
-    target_tokens = {"aop", "аоп"}
+    target_tokens = {"aop", "аоп", "аор"}
     best: Optional[ColumnPosition] = None
 
     for band in _group_words_into_vertical_bands(lines):
@@ -510,7 +553,8 @@ def _detect_aop_column(lines: Sequence[OcrLine]) -> Optional[ColumnPosition]:
 
 
 def _normalise_token(token: str) -> str:
-    return "".join(ch for ch in token.lower() if ch.isalnum())
+    normalized = _normalise_mixed_script(token)
+    return "".join(ch for ch in normalized.lower() if ch.isalnum())
 
 
 def _locate_token_sequence(
@@ -934,4 +978,3 @@ def _cluster_in_aop_zone(
 
 
 __all__ = ["extract_field_from_ocr"]
-

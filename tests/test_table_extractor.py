@@ -360,6 +360,50 @@ def test_extract_field_uses_value_from_overlapping_line_to_right():
     assert result.column_label == "current"
 
 
+def test_extract_field_handles_mixed_script_bs_assets():
+    rows: List[dict] = []
+    rows.append(_word(text="Текућа", left=520, top=40, line=1, word_num=1))
+    rows.append(_word(text="година", left=600, top=40, line=1, word_num=2))
+
+    rows.append(_word(text="УKУПHA", left=120, top=150, line=2, word_num=1))
+    rows.append(_word(text="AКTИВА", left=220, top=150, line=2, word_num=2))
+    rows.append(_word(text="789", left=420, top=150, line=2, word_num=3))
+
+    result = extract_field_from_ocr(
+        _result_from_rows(rows),
+        anchor_key="bs_assets",
+        field_name="assets",
+        year_preference="current",
+    )
+
+    assert result.success
+    assert result.value == 789
+    assert result.anchor_text is not None
+
+
+def test_extract_field_handles_mixed_script_bs_loss():
+    rows: List[dict] = []
+    rows.append(_word(text="Текућа", left=520, top=40, line=1, word_num=1))
+    rows.append(_word(text="година", left=600, top=40, line=1, word_num=2))
+
+    rows.append(_word(text="ГУБИТAK", left=120, top=150, line=2, word_num=1))
+    rows.append(_word(text="ИЗHАД", left=230, top=150, line=2, word_num=2))
+    rows.append(_word(text="ВИСИНE", left=340, top=150, line=2, word_num=3))
+    rows.append(_word(text="КАПИТAЛA", left=460, top=150, line=2, word_num=4))
+    rows.append(_word(text="654", left=640, top=150, line=2, word_num=5))
+
+    result = extract_field_from_ocr(
+        _result_from_rows(rows),
+        anchor_key="bs_loss",
+        field_name="loss",
+        year_preference="current",
+    )
+
+    assert result.success
+    assert result.value == 654
+    assert result.anchor_text is not None
+
+
 @pytest.mark.parametrize(
     "words",
     [
