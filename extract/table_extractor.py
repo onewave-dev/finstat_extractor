@@ -186,8 +186,10 @@ def extract_field_from_ocr(
             if column:
                 last_column = column
 
-            cluster, clusters = _locate_numeric_cluster(line, column)
-            if cluster is None:
+            candidate_clusters, clusters = _locate_numeric_cluster(
+                line, column, page_lines
+            )
+            if not candidate_clusters:
                 if column_diag and column is None:
                     collected_errors.append(column_diag)
                 collected_errors.append(
@@ -197,51 +199,52 @@ def extract_field_from_ocr(
                         context={
                             "page": page.page_number,
                             "anchor_text": line.text.strip(),
-                            "anchor_bbox": line.bbox,
-                            "available_columns": sorted(candidate_columns.keys()),
-                            "candidate_values": [c.text for c in clusters],
-                        },
+                                "anchor_bbox": line.bbox,
+                                "available_columns": sorted(candidate_columns.keys()),
+                                "candidate_values": [c.text for c in clusters],
+                            },
+                        )
                     )
-                )
                 continue
 
-            try:
-                parse_result = normalize_numeric_string(
-                    cluster.text,
-                    min_value=min_value,
-                    max_value=max_value,
-                )
-            except NumericParseError as exc:
-                if column_diag and column is None:
-                    collected_errors.append(column_diag)
-                collected_errors.append(
-                    ExtractionMessage(
-                        code="value_normalization_failed",
-                        message=str(exc),
-                        context={
-                            "page": page.page_number,
-                            "raw_text": cluster.text,
-                            "anchor_text": line.text.strip(),
-                        },
+            for cluster in candidate_clusters:
+                try:
+                    parse_result = normalize_numeric_string(
+                        cluster.text,
+                        min_value=min_value,
+                        max_value=max_value,
                     )
-                )
-                continue
+                except NumericParseError as exc:
+                    if column_diag and column is None:
+                        collected_errors.append(column_diag)
+                    collected_errors.append(
+                        ExtractionMessage(
+                            code="value_normalization_failed",
+                            message=str(exc),
+                            context={
+                                "page": page.page_number,
+                                "raw_text": cluster.text,
+                                "anchor_text": line.text.strip(),
+                            },
+                        )
+                    )
+                    continue
 
-            result.value = parse_result.value
-            result.raw_text = cluster.text
-            result.normalized_text = parse_result.normalized_text
-            result.page_number = page.page_number
-            result.anchor_text = line.text.strip()
-            result.anchor_bbox = line.bbox
-            if column:
-                result.column_label = column_label
-                result.column_bbox = column.bbox
-            if column_diag:
-                if column is None:
-                    result.warnings.append(column_diag)
-                else:
-                    result.warnings.append(column_diag)
-            return result
+                result.value = parse_result.value
+                result.raw_text = cluster.text
+                result.normalized_text = parse_result.normalized_text
+                result.page_number = page.page_number
+                result.anchor_text = line.text.strip()
+                result.anchor_bbox = line.bbox
+                if column:
+                    result.column_label = column_label
+                    result.column_bbox = column.bbox
+                if column_diag:
+                    if column is None:
+                        result.warnings.append(column_diag)
+                    else:
+                        result.warnings.append(column_diag)
+                return result
 
     if detected_anchor:
         if last_anchor_line is not None and result.anchor_text is None:
@@ -624,42 +627,86 @@ def _select_column(
 
 
 def _locate_numeric_cluster(
-    line: OcrLine, column: Optional[ColumnPosition]
-) -> Tuple[Optional[NumericCluster], List[NumericCluster]]:
-    clusters = _build_numeric_clusters(line)
-    if not clusters:
-        return None, clusters
+    anchor_line: OcrLine,
+    column: Optional[ColumnPosition],
+    page_lines: Sequence[OcrLine],
+) -> Tuple[List[NumericCluster], List[NumericCluster]]:
+    anchor_right = anchor_line.right
+    anchor_top = anchor_line.top
+    anchor_bottom = anchor_line.bottom
 
-    anchor_right = line.right
+    relevant_words: List[OcrWord] = []
+
+    for word in anchor_line.words:
+        if word.text.strip():
+            relevant_words.append(word)
+
+    for line in page_lines:
+        if line is anchor_line:
+            continue
+        if line.page_number != anchor_line.page_number:
+            continue
+        if line.bottom < anchor_top or line.top > anchor_bottom:
+            continue
+        if line.left < anchor_right - 5:
+            continue
+        for word in line.words:
+            if not word.text.strip():
+                continue
+            if word.right < anchor_right - 5:
+                continue
+            relevant_words.append(word)
+
+    clusters = _build_numeric_clusters(relevant_words)
+    if not clusters:
+        return [], clusters
+
     filtered = [cluster for cluster in clusters if cluster.right >= anchor_right - 5]
     if not filtered:
-        filtered = clusters
+        filtered = list(clusters)
 
-    if column:
-        column_center = column.center_x
-        filtered.sort(
-            key=lambda cluster: (
+    def _distance_key(cluster: NumericCluster) -> Tuple[float, float, float]:
+        if column:
+            column_center = column.center_x
+            return (
                 abs(cluster.center_x - column_center),
                 abs(cluster.left - column_center),
+                cluster.left,
             )
-        )
-    else:
-        filtered.sort(
-            key=lambda cluster: (
-                0 if cluster.left >= anchor_right else 1,
-                abs(cluster.left - anchor_right),
-            )
+        return (
+            0.0 if cluster.left >= anchor_right else 1.0,
+            abs(cluster.left - anchor_right),
+            cluster.left,
         )
 
-    return filtered[0], clusters
+    high_priority: List[NumericCluster] = []
+    low_priority: List[NumericCluster] = []
+    for cluster in filtered:
+        if _looks_like_formula(cluster.text):
+            low_priority.append(cluster)
+        else:
+            high_priority.append(cluster)
+
+    high_priority.sort(key=_distance_key)
+    low_priority.sort(key=_distance_key)
+
+    ordered = high_priority + low_priority
+    return ordered, clusters
 
 
-def _build_numeric_clusters(line: OcrLine) -> List[NumericCluster]:
+def _build_numeric_clusters(words: Sequence[OcrWord]) -> List[NumericCluster]:
     clusters: List[NumericCluster] = []
     current: List[OcrWord] = []
 
-    for word in line.words:
+    sorted_words = sorted(words, key=lambda word: (word.top, word.left))
+
+    for word in sorted_words:
         if _is_numeric_like(word.text):
+            if current:
+                prev = current[-1]
+                if _should_break_cluster(prev, word):
+                    clusters.append(_make_cluster(current))
+                    current = []
             current.append(word)
             continue
         if current:
@@ -670,6 +717,23 @@ def _build_numeric_clusters(line: OcrLine) -> List[NumericCluster]:
         clusters.append(_make_cluster(current))
 
     return clusters
+
+
+def _should_break_cluster(prev: OcrWord, current: OcrWord) -> bool:
+    horizontal_gap = current.left - prev.right
+    if horizontal_gap > _cluster_gap_threshold(prev, current):
+        return True
+
+    vertical_gap = abs(current.top - prev.top)
+    if vertical_gap > max(prev.height, current.height):
+        return True
+
+    return False
+
+
+def _cluster_gap_threshold(prev: OcrWord, current: OcrWord) -> int:
+    max_height = max(prev.height, current.height, 1)
+    return max(15, int(max_height * 1.5))
 
 
 def _is_numeric_like(text: str) -> bool:
@@ -688,6 +752,11 @@ def _make_cluster(words: List[OcrWord]) -> NumericCluster:
     top = min(word.top for word in words)
     bottom = max(word.bottom for word in words)
     return NumericCluster(text=text, left=left, right=right, top=top, bottom=bottom, words=list(words))
+
+
+def _looks_like_formula(text: str) -> bool:
+    normalized = text.upper()
+    return "+" in text or "=" in text or "АОП" in normalized
 
 
 __all__ = ["extract_field_from_ocr"]

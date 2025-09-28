@@ -210,6 +210,84 @@ def test_extract_field_falls_back_to_previous_year_when_preferred_missing():
     assert any(msg.code == "column_fallback_used" for msg in result.warnings)
 
 
+def test_extract_field_skips_formula_like_cluster_when_numeric_available():
+    rows: List[dict] = []
+    rows.append(
+        _word(text="Текућа", left=100, top=50, line=1, word_num=1)
+    )
+    rows.append(
+        _word(text="година", left=180, top=50, line=1, word_num=2)
+    )
+
+    rows.append(
+        _word(text="Пословни", left=120, top=150, line=2, word_num=1)
+    )
+    rows.append(
+        _word(text="приходи", left=220, top=150, line=2, word_num=2)
+    )
+    rows.append(
+        _word(text="АОП102", left=330, top=150, line=2, word_num=3)
+    )
+    rows.append(
+        _word(text="+", left=420, top=150, line=2, word_num=4, width=20)
+    )
+    rows.append(
+        _word(text="АОП103", left=460, top=150, line=2, word_num=5)
+    )
+    rows.append(
+        _word(text="123456", left=560, top=150, line=2, word_num=6)
+    )
+
+    result = extract_field_from_ocr(
+        _result_from_rows(rows),
+        anchor_key="bu_revenue",
+        field_name="revenue",
+        year_preference="current",
+    )
+
+    assert result.success
+    assert result.value == 123456
+    assert result.column_label == "current"
+
+
+def test_extract_field_uses_value_from_overlapping_line_to_right():
+    rows: List[dict] = []
+    rows.append(
+        _word(text="Текућа", left=520, top=40, line=1, word_num=1)
+    )
+    rows.append(
+        _word(text="година", left=600, top=40, line=1, word_num=2)
+    )
+
+    rows.append(
+        _word(text="Губитак", left=120, top=150, line=2, word_num=1)
+    )
+    rows.append(
+        _word(text="изнад", left=210, top=150, line=2, word_num=2)
+    )
+    rows.append(
+        _word(text="висине", left=300, top=150, line=2, word_num=3)
+    )
+    rows.append(
+        _word(text="капитала", left=380, top=150, line=2, word_num=4)
+    )
+
+    rows.append(
+        _word(text="123", left=480, top=152, line=3, word_num=1)
+    )
+
+    result = extract_field_from_ocr(
+        _result_from_rows(rows),
+        anchor_key="bs_loss",
+        field_name="loss",
+        year_preference="current",
+    )
+
+    assert result.success
+    assert result.value == 123
+    assert result.column_label == "current"
+
+
 @pytest.mark.parametrize(
     "words",
     [
