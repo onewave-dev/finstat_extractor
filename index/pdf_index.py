@@ -209,24 +209,25 @@ def build_index(
             index.unclassified_files.append(pdf_path)
             continue
 
-        form_type = _detect_form_type(ocr_payload, text, anchors_module)
-        if not form_type:
+        form_types = _detect_form_type(ocr_payload, text, anchors_module)
+        if not form_types:
             message = f"Unable to determine form type for {pdf_path} (MB {mb})"
             logger.warning(message)
             index.report_notes[mb]["unknown"].append(message)
             continue
 
         period = _detect_period(ocr_payload, text, anchors_module)
-        entry = IndexedPdf(
+        base_kwargs = dict(
             path=pdf_path,
             mb=mb,
-            form_type=form_type,
             mtime=pdf_path.stat().st_mtime,
             period=period,
         )
-        if period and period.raw:
-            entry.notes.append(f"period:{period.raw}")
-        index.register(entry)
+        for form_type in form_types:
+            entry = IndexedPdf(form_type=form_type, **base_kwargs)
+            if period and period.raw:
+                entry.notes.append(f"period:{period.raw}")
+            index.register(entry)
 
     return index
 
@@ -375,7 +376,7 @@ def _detect_maticni_broj(ocr_payload: object, text: str, anchors_module) -> Opti
     return None
 
 
-def _detect_form_type(ocr_payload: object, text: str, anchors_module) -> Optional[str]:
+def _detect_form_type(ocr_payload: object, text: str, anchors_module) -> List[str]:
     detectors = [
         getattr(anchors_module, "detect_form_type", None),
         getattr(anchors_module, "classify_form", None),
@@ -385,12 +386,9 @@ def _detect_form_type(ocr_payload: object, text: str, anchors_module) -> Optiona
         if not callable(detector):
             continue
         result = detector(ocr_payload)
-        if isinstance(result, dict) and "form_type" in result:
-            result = result["form_type"]
-        if isinstance(result, (list, tuple)):
-            result = result[0] if result else None
-        if result:
-            return normalize_form_type(str(result))
+        forms = _coerce_form_types(result)
+        if forms:
+            return forms
 
     form_patterns = getattr(anchors_module, "FORM_HEADER_PATTERNS", None)
     if not isinstance(form_patterns, dict):
@@ -402,11 +400,46 @@ def _detect_form_type(ocr_payload: object, text: str, anchors_module) -> Optiona
         form_patterns.get("bs"), r"(?i)билан[сc]\s+стања|bilans\s+stanja"
     )
 
+    detected: List[str] = []
     if pattern_bu.search(text):
-        return "bu"
+        detected.append("bu")
     if pattern_bs.search(text):
-        return "bs"
-    return None
+        detected.append("bs")
+    return detected
+
+
+def _coerce_form_types(candidate) -> List[str]:
+    forms: List[str] = []
+
+    def _append(value) -> None:
+        if value is None:
+            return
+        normalized = normalize_form_type(str(value))
+        if normalized in FORM_TYPES and normalized not in forms:
+            forms.append(normalized)
+
+    if candidate is None:
+        return forms
+
+    if isinstance(candidate, dict):
+        if "form_types" in candidate:
+            return _coerce_form_types(candidate["form_types"])
+        if "form_type" in candidate:
+            _append(candidate["form_type"])
+            return forms
+        if "type" in candidate:
+            _append(candidate["type"])
+            return forms
+
+    if isinstance(candidate, (list, tuple, set)):
+        for item in candidate:
+            for value in _coerce_form_types(item):
+                if value not in forms:
+                    forms.append(value)
+        return forms
+
+    _append(candidate)
+    return forms
 
 
 def _detect_period(
