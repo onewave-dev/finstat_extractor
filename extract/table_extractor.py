@@ -132,6 +132,7 @@ def extract_field_from_ocr(
     collected_errors: List[ExtractionMessage] = []
     last_anchor_line: Optional[OcrLine] = None
     last_column: Optional[ColumnPosition] = None
+    last_columns: Optional[Dict[str, ColumnPosition]] = None
 
     for page in ocr_result.pages:
         page_lines = list(_build_lines(page))
@@ -139,11 +140,20 @@ def extract_field_from_ocr(
             continue
 
         page_columns = _detect_year_columns(page_lines)
+        if page_columns:
+            last_columns = page_columns
+
+        candidate_columns: Dict[str, ColumnPosition] = {}
+        if page_columns:
+            candidate_columns = page_columns
+        elif last_columns:
+            candidate_columns = last_columns
+
         for line in _find_anchor_lines(page_lines, anchor_def):
             detected_anchor = True
             last_anchor_line = line
             column, column_label, column_diag = _select_column(
-                page_columns, year_preference
+                candidate_columns, year_preference
             )
             if column:
                 last_column = column
@@ -160,7 +170,7 @@ def extract_field_from_ocr(
                             "page": page.page_number,
                             "anchor_text": line.text.strip(),
                             "anchor_bbox": line.bbox,
-                            "available_columns": sorted(page_columns.keys()),
+                            "available_columns": sorted(candidate_columns.keys()),
                             "candidate_values": [c.text for c in clusters],
                         },
                     )

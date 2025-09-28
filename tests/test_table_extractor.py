@@ -74,6 +74,23 @@ def _result_from_rows(rows: Iterable[dict]) -> OcrResult:
     return OcrResult(pdf_path="dummy.pdf", pdf_hash="hash", text=page.text, pages=[page])
 
 
+def _result_from_pages(pages_rows: Sequence[Iterable[dict]]) -> OcrResult:
+    pages: List[OcrPage] = []
+    texts: List[str] = []
+    for page_number, rows in enumerate(pages_rows, start=1):
+        row_list = list(rows)
+        page_text = "\n".join(row["text"] for row in row_list)
+        page = OcrPage(page_number=page_number, text=page_text, tsv=row_list)
+        pages.append(page)
+        texts.append(page_text)
+    return OcrResult(
+        pdf_path="dummy.pdf",
+        pdf_hash="hash",
+        text="\n".join(texts),
+        pages=pages,
+    )
+
+
 def _make_line(words: Sequence[OcrWord]) -> OcrLine:
     return OcrLine(page_number=1, block_num=1, par_num=1, line_num=1, words=list(words))
 
@@ -286,3 +303,28 @@ def test_detect_year_columns_uses_regex_fallback_when_synonyms_missing(monkeypat
     assert current.label == "current"
     assert current.left == 146
     assert current.text.startswith("Текућа")
+
+
+def test_extract_field_reuses_columns_from_previous_page():
+    header_rows = [
+        _word(text="Текућа", left=100, top=40, line=1, word_num=1, page=1),
+        _word(text="година", left=180, top=40, line=1, word_num=2, page=1),
+    ]
+
+    data_rows = [
+        _word(text="Пословни", left=120, top=150, line=1, word_num=1, page=2),
+        _word(text="приходи", left=220, top=150, line=1, word_num=2, page=2),
+        _word(text="123", left=320, top=150, line=1, word_num=3, page=2),
+    ]
+
+    result = extract_field_from_ocr(
+        _result_from_pages([header_rows, data_rows]),
+        anchor_key="bu_revenue",
+        field_name="revenue",
+        year_preference="current",
+    )
+
+    assert result.success
+    assert result.value == 123
+    assert result.column_label == "current"
+    assert not result.warnings
