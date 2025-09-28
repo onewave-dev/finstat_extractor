@@ -282,6 +282,37 @@ def test_extract_field_skips_aop_cluster_between_anchor_and_value():
     assert result.column_label is None
 
 
+def test_extract_field_skips_split_letter_aop_column():
+    rows: List[dict] = []
+    # Split AOP column rendered as vertical single letters.
+    rows.append(_word(text="A", left=40, top=40, line=1, word_num=1))
+    rows.append(_word(text="O", left=42, top=80, line=2, word_num=1))
+    rows.append(_word(text="P", left=44, top=120, line=3, word_num=1))
+
+    # Year header to detect the "current" column.
+    rows.append(_word(text="Текућа", left=140, top=40, line=1, word_num=2))
+    rows.append(_word(text="година", left=220, top=40, line=1, word_num=3))
+
+    # Anchor row with the AOP code inside the AOP column and the value to the right.
+    rows.append(_word(text="Пословни", left=160, top=150, line=4, word_num=1))
+    rows.append(_word(text="приходи", left=260, top=150, line=4, word_num=2))
+    rows.append(_word(text="101", left=50, top=150, line=4, word_num=3))
+    rows.append(_word(text="123", left=360, top=150, line=4, word_num=4))
+    rows.append(_word(text="456", left=440, top=150, line=4, word_num=5))
+
+    result = extract_field_from_ocr(
+        _result_from_rows(rows),
+        anchor_key="bu_revenue",
+        field_name="revenue",
+        year_preference="current",
+    )
+
+    assert result.success
+    assert result.value == 123456
+    assert result.column_label == "current"
+    assert not result.errors
+
+
 def test_extract_field_respects_selected_column_boundary():
     rows: List[dict] = []
     rows.append(

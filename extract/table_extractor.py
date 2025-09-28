@@ -539,7 +539,31 @@ def _detect_aop_column(lines: Sequence[OcrLine]) -> Optional[ColumnPosition]:
         tokens = [token for _, token in band.filtered_words]
         if not tokens:
             continue
-        if not any(token in target_tokens for token in tokens):
+        expanded_tokens = set(tokens)
+
+        def _add_run_sequences(run_tokens: Sequence[str]) -> None:
+            if len(run_tokens) < 2:
+                return
+            for length in range(2, len(run_tokens) + 1):
+                for offset in range(len(run_tokens) - length + 1):
+                    expanded_tokens.add("".join(run_tokens[offset : offset + length]))
+
+        # Some OCR outputs render the "AOP" column header as three stacked
+        # single-letter tokens ("А", "О", "П"). Collapse such runs so that
+        # they can be matched against the target tokens.
+        run_start: Optional[int] = None
+        for index, token in enumerate(tokens):
+            if len(token) == 1:
+                if run_start is None:
+                    run_start = index
+                continue
+            if run_start is not None:
+                _add_run_sequences(tokens[run_start:index])
+                run_start = None
+        if run_start is not None:
+            _add_run_sequences(tokens[run_start:])
+
+        if not any(token in target_tokens for token in expanded_tokens):
             continue
         candidate = ColumnPosition(
             label="aop",
