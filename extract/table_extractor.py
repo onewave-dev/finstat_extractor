@@ -315,6 +315,25 @@ def extract_field_from_ocr(
     return result
 
 
+def extract_capital_aop0401(
+    ocr_result: OcrResult,
+    *,
+    year_preference: Optional[str] = "current",
+    min_value: Optional[int] = None,
+    max_value: Optional[int] = None,
+) -> ExtractionResult:
+    """Extract the capital value from the AOP 0401 row."""
+
+    return extract_field_from_ocr(
+        ocr_result,
+        anchor_key="bs_capital_aop0401",
+        field_name="A. Капитал (AOP 0401)",
+        year_preference=year_preference,
+        min_value=min_value,
+        max_value=max_value,
+    )
+
+
 def _build_lines(page: OcrPage) -> Iterable[OcrLine]:
     buckets: Dict[Tuple[int, int, int], List[OcrWord]] = {}
     for row in page.tsv:
@@ -1004,4 +1023,4 @@ def _cluster_in_aop_zone(
     return (aop_column.left - margin) <= center <= (aop_column.right + margin)
 
 
-__all__ = ["extract_field_from_ocr"]
+__all__ = ["extract_field_from_ocr", "extract_capital_aop0401"]

@@ -90,6 +90,16 @@ ROW_ANCHOR_PATTERNS: Dict[str, Pattern[str]] = {
     "bu_revenue": re.compile(r"(?i)пословни\s+приходи"),
     "bs_assets": re.compile(r"(?i)укупна\s+актива"),
     "bs_loss": re.compile(r"(?i)губитак\s+изнад\s+висине\s+капитала"),
+    "bs_capital_aop0401": re.compile(
+        r"""
+        (?:
+            \bA\s*\.\s*капитал\b.*?0*401 |   # "A. КАПИТАЛ" row referencing AOP
+            \bAOP\s*0*401\b |                 # Latin AOP notation
+            \bАОП\s*0*401\b                   # Cyrillic AOP notation
+        )
+        """,
+        re.IGNORECASE | re.VERBOSE,
+    ),
 }
 
 
@@ -108,6 +118,23 @@ ROW_ANCHOR_SYNONYMS: Dict[str, Iterable[str]] = {
         "губитак изнад висине капитала",
         "gubitak iznad visine kapitala",
         "губитак изнад висине капитала (у 000 рсд)",
+    ],
+    "bs_capital_aop0401": [
+        "a. капитал",
+        "а. капитал",
+        "a капитал",
+        "a. kapital",
+        "a kapital",
+        "а капитал",
+        "капитал (аоп 0401)",
+        "капитал аоп 0401",
+        "капитал aop 0401",
+        "capital aop 0401",
+        "kapital aop 0401",
+        "aop 0401",
+        "аоп 0401",
+        "aop0401",
+        "a. capital",
     ],
 }
 
