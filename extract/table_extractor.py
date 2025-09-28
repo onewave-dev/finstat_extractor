@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 from ocr import anchors
@@ -104,6 +105,32 @@ class NumericCluster:
         return (self.left + self.right) / 2.0
 
 
+def _infer_reference_year(ocr_result: OcrResult) -> int:
+    pattern = anchors.YEAR_FOUR_DIGIT_PATTERN
+    candidate_years = set()
+
+    def _collect(text: Optional[str]) -> None:
+        if not text:
+            return
+        for match in pattern.finditer(text):
+            try:
+                year_value = int(match.group("year"))
+            except (TypeError, ValueError):
+                continue
+            if year_value >= 2000:
+                candidate_years.add(year_value)
+
+    _collect(ocr_result.text)
+    for page in ocr_result.pages:
+        lines = page.text.splitlines()
+        for line in lines[:5]:
+            _collect(line)
+
+    if candidate_years:
+        return max(candidate_years)
+    return date.today().year
+
+
 def extract_field_from_ocr(
     ocr_result: OcrResult,
     *,
@@ -118,7 +145,8 @@ def extract_field_from_ocr(
         result.add_error("no_pages", "OCR result does not contain any pages")
         return result
 
-    anchor_map = anchors.build_anchor_map()
+    reference_year = _infer_reference_year(ocr_result)
+    anchor_map = anchors.build_anchor_map(reference_year=reference_year)
     anchor_def = anchor_map.get(anchor_key)
     if anchor_def is None:
         result.add_error(
@@ -139,7 +167,7 @@ def extract_field_from_ocr(
         if not page_lines:
             continue
 
-        page_columns = _detect_year_columns(page_lines)
+        page_columns = _detect_year_columns(page_lines, reference_year=reference_year)
         if page_columns:
             last_columns = page_columns
 
@@ -300,13 +328,17 @@ def _find_anchor_lines(
             yield line
 
 
-def _detect_year_columns(lines: Sequence[OcrLine]) -> Dict[str, ColumnPosition]:
+def _detect_year_columns(
+    lines: Sequence[OcrLine], *, reference_year: Optional[int] = None
+) -> Dict[str, ColumnPosition]:
     result: Dict[str, ColumnPosition] = {}
-    reference_year = anchors.get_reference_year()
-    synonyms = anchors.get_year_column_synonyms(reference_year=reference_year)
+    resolved_reference_year = anchors.get_reference_year(reference_year)
+    synonyms = anchors.get_year_column_synonyms(
+        reference_year=resolved_reference_year
+    )
     numeric_labels = {
-        reference_year: "current",
-        reference_year - 1: "previous",
+        resolved_reference_year: "current",
+        resolved_reference_year - 1: "previous",
     }
 
     bands = _group_words_into_vertical_bands(lines)
