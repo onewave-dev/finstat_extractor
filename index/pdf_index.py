@@ -31,7 +31,7 @@ from typing import Dict, Iterable, List, MutableMapping, Optional, Tuple, Union
 from ocr import anchors, ocr_engine
 
 
-LOGGER = logging.getLogger(__name__)
+LOGGER = logging.getLogger("finstat_extractor.index.pdf_index")
 
 # ---------------------------------------------------------------------------
 # Data structures
