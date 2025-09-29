@@ -264,10 +264,14 @@ def normalise_config(config: Dict[str, object]) -> Dict[str, object]:
 
 
 def configure_logging(*, debug: bool, log_path: Path) -> logging.Logger:
+    """Configure application logging using a dedicated namespace."""
+
     log_path.parent.mkdir(parents=True, exist_ok=True)
+
     level = logging.DEBUG if debug else logging.INFO
-    logger = logging.getLogger()
+    logger = logging.getLogger("finstat_extractor")
     logger.setLevel(level)
+    logger.propagate = False
 
     for handler in list(logger.handlers):
         logger.removeHandler(handler)
@@ -283,6 +287,12 @@ def configure_logging(*, debug: bool, log_path: Path) -> logging.Logger:
     file_handler.setLevel(level)
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
+
+    root_level = logging.INFO if debug else logging.WARNING
+    logging.getLogger().setLevel(root_level)
+
+    for noisy_logger in ("pdfminer", "pdfplumber"):
+        logging.getLogger(noisy_logger).setLevel(logging.INFO)
 
     logging.captureWarnings(True)
     return logger
