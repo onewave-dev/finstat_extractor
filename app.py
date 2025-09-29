@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import importlib
 import inspect
 import logging
 import shutil
@@ -300,6 +301,19 @@ def configure_dependencies(config: Dict[str, object], *, logger: logging.Logger)
     config["poppler_bin_dir"] = resolve_poppler_path(config.get("poppler_bin_dir"))
     logger.debug("Tesseract binary: %s", config["tesseract_path"])
     logger.debug("Poppler bin directory: %s", config["poppler_bin_dir"])
+
+    for module_name, install_hint in (
+        ("cv2", "pip install opencv-python"),
+        ("pdfplumber", "pip install pdfplumber"),
+    ):
+        try:
+            importlib.import_module(module_name)
+        except ImportError as exc:
+            raise DependencyError(
+                f"Missing required dependency '{module_name}'. Install it via `{install_hint}`."
+            ) from exc
+        else:
+            logger.debug("Dependency '%s' is available", module_name)
 
 
 def resolve_tesseract_path(value: Optional[object]) -> str:
