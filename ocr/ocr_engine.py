@@ -320,7 +320,15 @@ class OCREngine:
 
     def _cv2(self):
         if self._cv2_module is None:
-            import cv2  # pylint: disable=import-outside-toplevel
+            try:
+                import cv2  # pylint: disable=import-outside-toplevel
+            except ImportError as exc:  # pragma: no cover - exercised via error handling tests
+                message = (
+                    "OpenCV (cv2) is required for image preprocessing. Install it via "
+                    "`pip install opencv-python`."
+                )
+                self.logger.error(message)
+                raise OCRProcessingError(message) from exc
 
             self._cv2_module = cv2
         return self._cv2_module
