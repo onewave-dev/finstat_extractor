@@ -150,6 +150,38 @@ def test_extract_field_prefers_numeric_cluster_right_of_anchor():
     assert not result.errors
 
 
+def test_extract_field_returns_zero_when_no_numeric_tokens_detected():
+    rows: List[dict] = []
+    rows.append(
+        _word(text="Текућа", left=100, top=40, line=1, word_num=1)
+    )
+    rows.append(
+        _word(text="година", left=180, top=40, line=1, word_num=2)
+    )
+    rows.append(
+        _word(text="Пословни", left=120, top=140, line=2, word_num=1)
+    )
+    rows.append(
+        _word(text="приходи", left=220, top=140, line=2, word_num=2)
+    )
+
+    result = extract_field_from_ocr(
+        _result_from_rows(rows),
+        anchor_key="bu_revenue",
+        field_name="revenue",
+        year_preference="current",
+    )
+
+    assert result.success
+    assert result.value == 0
+    assert result.raw_text == ""
+    assert result.normalized_text == "0"
+    assert result.column_label == "current"
+    assert result.anchor_text == "Пословни приходи"
+    assert not result.errors
+    assert not result.warnings
+
+
 def test_extract_field_uses_left_cluster_when_no_right_candidate():
     rows: List[dict] = []
     rows.append(

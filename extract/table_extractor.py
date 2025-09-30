@@ -235,6 +235,41 @@ def extract_field_from_ocr(
                 line, column, page_lines, aop_column, candidate_columns
             )
             if not candidate_clusters:
+                if column is not None:
+                    try:
+                        parse_result = normalize_numeric_string(
+                            "",
+                            min_value=min_value,
+                            max_value=max_value,
+                        )
+                    except NumericParseError as exc:
+                        collected_errors.append(
+                            ExtractionMessage(
+                                code="value_normalization_failed",
+                                message=str(exc),
+                                context={
+                                    "page": page.page_number,
+                                    "raw_text": "",
+                                    "anchor_text": line.text.strip(),
+                                },
+                            )
+                        )
+                        if column_diag:
+                            collected_errors.append(column_diag)
+                        continue
+
+                    result.value = parse_result.value
+                    result.raw_text = ""
+                    result.normalized_text = parse_result.normalized_text
+                    result.page_number = page.page_number
+                    result.anchor_text = line.text.strip()
+                    result.anchor_bbox = line.bbox
+                    result.column_label = column_label
+                    result.column_bbox = column.bbox
+                    if column_diag:
+                        result.warnings.append(column_diag)
+                    return result
+
                 if column_diag and column is None:
                     collected_errors.append(column_diag)
                 collected_errors.append(
@@ -244,12 +279,12 @@ def extract_field_from_ocr(
                         context={
                             "page": page.page_number,
                             "anchor_text": line.text.strip(),
-                                "anchor_bbox": line.bbox,
-                                "available_columns": sorted(candidate_columns.keys()),
-                                "candidate_values": [c.text for c in clusters],
-                            },
-                        )
+                            "anchor_bbox": line.bbox,
+                            "available_columns": sorted(candidate_columns.keys()),
+                            "candidate_values": [c.text for c in clusters],
+                        },
                     )
+                )
                 continue
 
             for cluster in candidate_clusters:
