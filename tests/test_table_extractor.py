@@ -345,6 +345,33 @@ def test_extract_field_skips_split_letter_aop_column():
     assert not result.errors
 
 
+def test_extract_field_reads_value_when_aop_shares_value_line():
+    rows: List[dict] = []
+    rows.append(_word(text="Текућа", left=520, top=40, line=1, word_num=1))
+    rows.append(_word(text="година", left=600, top=40, line=1, word_num=2))
+
+    rows.append(_word(text="Губитак", left=160, top=150, line=2, word_num=1))
+    rows.append(_word(text="изнад", left=260, top=150, line=2, word_num=2))
+    rows.append(_word(text="висине", left=360, top=150, line=2, word_num=3))
+    rows.append(_word(text="капитала", left=460, top=150, line=2, word_num=4))
+
+    rows.append(_word(text="0401", left=80, top=150, line=3, word_num=1))
+    rows.append(_word(text="123", left=560, top=150, line=3, word_num=2))
+    rows.append(_word(text="456", left=640, top=150, line=3, word_num=3))
+
+    result = extract_field_from_ocr(
+        _result_from_rows(rows),
+        anchor_key="bs_loss",
+        field_name="loss",
+        year_preference="current",
+    )
+
+    assert result.success
+    assert result.value == 123456
+    assert result.column_label == "current"
+    assert not result.errors
+
+
 def test_extract_field_respects_selected_column_boundary():
     rows: List[dict] = []
     rows.append(

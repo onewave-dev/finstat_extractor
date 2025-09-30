@@ -904,6 +904,7 @@ def _locate_numeric_cluster(
 
     relevant_words: List[OcrWord] = []
     all_relevant_words: List[OcrWord] = []
+    seen_word_ids: Set[int] = set()
 
     column_tolerance = 8
     column_left_bound: Optional[float] = None
@@ -940,6 +941,10 @@ def _locate_numeric_cluster(
     for word in anchor_line.words:
         if not word.text.strip():
             continue
+        word_id = id(word)
+        if word_id in seen_word_ids:
+            continue
+        seen_word_ids.add(word_id)
         all_relevant_words.append(word)
         if not _word_in_selected_column(word):
             continue
@@ -952,13 +957,15 @@ def _locate_numeric_cluster(
             continue
         if line.bottom < anchor_top or line.top > anchor_bottom:
             continue
-        if line.left < anchor_threshold:
-            continue
         for word in line.words:
             if not word.text.strip():
                 continue
             if word.right < anchor_threshold:
                 continue
+            word_id = id(word)
+            if word_id in seen_word_ids:
+                continue
+            seen_word_ids.add(word_id)
             all_relevant_words.append(word)
             if not _word_in_selected_column(word):
                 continue
